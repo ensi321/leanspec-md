@@ -1,0 +1,33 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/node/api/endpoints/states.py
+#   - src/lean_spec/node/api/routes.py
+# related_prs: []
+# ---
+
+/lean/v0/states/finalized:
+  get:
+    operationId: getStateFinalized
+    summary: Get the latest finalized state.
+    description: |
+      Returns the SSZ-encoded post-state of the latest finalized block.
+
+      Used by checkpoint-sync clients to bootstrap from a trusted finalized
+      anchor instead of replaying from genesis. The response is the SSZ
+      encoding of the lstar State container; see
+      `specs/lstar/beacon-chain.md#state`.
+    tags:
+      - Beacon
+    responses:
+      '200':
+        description: SSZ-encoded finalized state.
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: SSZ-encoded State container.
+      '503':
+        description: Node has not yet reached finality.

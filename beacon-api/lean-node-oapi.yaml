@@ -1,0 +1,64 @@
+# Consolidated OpenAPI document for the Lean HTTP API.
+#
+# Synced against leanSpec commit: 87943be
+#
+# Endpoints assembled from:
+#   apis/node/health.yaml
+#   apis/beacon/states/finalized.yaml
+#   apis/beacon/blocks/finalized.yaml
+#   apis/beacon/checkpoints/justified.yaml
+#   apis/debug/fork_choice.yaml
+#   apis/admin/aggregator.yaml
+#
+# Types assembled from:
+#   types/primitive.yaml
+#   types/api.yaml
+#   types/fork_choice.yaml
+#   types/lstar/block.yaml
+#
+# This is a personal study artifact; not redoc-published. Cross-reference
+# the per-endpoint YAML files for the full schemas. The consolidated form
+# below is a placeholder showing the layout; populate via a small build
+# script if needed.
+
+openapi: 3.1.0
+info:
+  title: Lean HTTP API (lstar)
+  description: |
+    Read-only and admin HTTP endpoints exposed by a leanSpec node.
+    Mirrors the role of ethereum/beacon-APIs but covers only the
+    /lean/v0/* surface plus /metrics.
+  version: lstar@87943be
+
+servers:
+  - url: http://localhost:5052
+    description: Default lean RPC port.
+
+tags:
+  - name: Node
+    description: Node liveness checks.
+  - name: Beacon
+    description: Chain state and checkpoints.
+  - name: Debug
+    description: Internal store snapshots; not stable across releases.
+  - name: Admin
+    description: Runtime configuration (aggregator toggle).
+
+paths:
+  /lean/v0/health:
+    $ref: 'apis/node/health.yaml#/~1lean~1v0~1health'
+  /lean/v0/states/finalized:
+    $ref: 'apis/beacon/states/finalized.yaml#/~1lean~1v0~1states~1finalized'
+  /lean/v0/blocks/finalized:
+    $ref: 'apis/beacon/blocks/finalized.yaml#/~1lean~1v0~1blocks~1finalized'
+  /lean/v0/checkpoints/justified:
+    $ref: 'apis/beacon/checkpoints/justified.yaml#/~1lean~1v0~1checkpoints~1justified'
+  /lean/v0/fork_choice:
+    $ref: 'apis/debug/fork_choice.yaml#/~1lean~1v0~1fork_choice'
+  /lean/v0/admin/aggregator:
+    $ref: 'apis/admin/aggregator.yaml#/~1lean~1v0~1admin~1aggregator'
+
+components:
+  schemas:
+    # Imported via per-file $ref; consolidated as needed.
+    # See types/*.yaml for full definitions.

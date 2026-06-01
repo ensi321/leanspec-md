@@ -1,0 +1,39 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/node/api/endpoints/states.py
+#   - src/lean_spec/node/api/routes.py
+# related_prs: []
+# ---
+#
+# Note: the route /lean/v0/blocks/finalized is referenced by checkpoint-sync
+# clients (Zeam, Ream) but is currently served by the same finalized-state
+# endpoint path in the leanSpec router. Verify against current router code
+# before relying on a distinct /blocks/finalized handler.
+
+/lean/v0/blocks/finalized:
+  get:
+    operationId: getBlockFinalized
+    summary: Get the latest finalized block.
+    description: |
+      Returns the SSZ-encoded signed block at the latest finalized
+      checkpoint.
+
+      Paired with /lean/v0/states/finalized for checkpoint-sync bootstrap:
+      a node downloads both the finalized state and the finalized block,
+      then validates that the block's state_root matches hash_tree_root
+      of the downloaded state.
+    tags:
+      - Beacon
+    responses:
+      '200':
+        description: SSZ-encoded SignedBlock at the latest finalized checkpoint.
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: SSZ-encoded SignedBlock container.
+      '404':
+        description: Block not available.

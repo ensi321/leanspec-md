@@ -1,0 +1,28 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/node/api/endpoints/checkpoints.py
+#   - src/lean_spec/node/api/routes.py
+# related_prs: []
+# ---
+
+/lean/v0/checkpoints/justified:
+  get:
+    operationId: getCheckpointJustified
+    summary: Get the latest justified checkpoint.
+    description: |
+      Returns the (root, slot) pair of the most recent justified checkpoint
+      from the node's local store.
+
+      Used by external monitors and tooling for tracking justification
+      progress on the network.
+    tags:
+      - Beacon
+    responses:
+      '200':
+        description: Latest justified checkpoint.
+        content:
+          application/json:
+            schema:
+              $ref: '../../../types/api.yaml#/components/schemas/Checkpoint'

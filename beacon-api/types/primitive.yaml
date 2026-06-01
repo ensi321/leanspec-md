@@ -1,0 +1,53 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/spec/forks/lstar/containers.py
+#   - src/lean_spec/spec/ssz/uint.py
+#   - src/lean_spec/spec/ssz/byte_arrays.py
+# related_prs: []
+# ---
+
+components:
+  schemas:
+    Slot:
+      type: string
+      format: uint64
+      pattern: '^[0-9]+$'
+      description: |
+        Slot number as a decimal-encoded uint64 string.
+        JSON encodes uints as strings to preserve precision in 64-bit values.
+
+    ValidatorIndex:
+      type: string
+      format: uint64
+      pattern: '^[0-9]+$'
+      description: Validator position in the registry as a decimal-encoded uint64.
+
+    SubnetId:
+      type: string
+      format: uint64
+      pattern: '^[0-9]+$'
+      description: Attestation subnet ID (0 .. ATTESTATION_COMMITTEE_COUNT - 1).
+
+    Root:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{64}$'
+      description: 32-byte hex string with 0x prefix.
+
+    Bytes4:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{8}$'
+
+    Bytes20:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{40}$'
+
+    Bytes32:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{64}$'
+
+    Bytes52:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{104}$'
+      description: XMSS public key bytes (Vector[byte, 52]).

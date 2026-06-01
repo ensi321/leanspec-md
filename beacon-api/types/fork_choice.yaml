@@ -1,0 +1,59 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/spec/forks/lstar/store.py
+#   - src/lean_spec/node/api/endpoints/fork_choice.py
+# related_prs: []
+# ---
+
+components:
+  schemas:
+    ForkChoiceView:
+      type: object
+      description: |
+        Snapshot of the fork-choice store; used by debug tooling.
+        Cross-reference: specs/lstar/fork-choice.md.
+      required:
+        - head
+        - safe_target
+        - latest_justified
+        - latest_finalized
+        - time
+      properties:
+        head:
+          $ref: './primitive.yaml#/components/schemas/Root'
+        safe_target:
+          $ref: './primitive.yaml#/components/schemas/Root'
+        latest_justified:
+          $ref: './api.yaml#/components/schemas/Checkpoint'
+        latest_finalized:
+          $ref: './api.yaml#/components/schemas/Checkpoint'
+        time:
+          type: string
+          format: uint64
+          pattern: '^[0-9]+$'
+          description: Current intervals since genesis.
+        validator_id:
+          oneOf:
+            - $ref: './primitive.yaml#/components/schemas/ValidatorIndex'
+            - type: 'null'
+        blocks:
+          type: object
+          additionalProperties:
+            type: object
+            description: |
+              Block payload at this root. JSON shape mirrors the Block
+              container; see specs/lstar/beacon-chain.md#block.
+        pools:
+          type: object
+          description: |
+            Per-pool attestation evidence counters; exact JSON shape
+            depends on the debug endpoint implementation.
+          properties:
+            attestation_signatures_count:
+              type: integer
+            new_aggregated_payloads_count:
+              type: integer
+            known_aggregated_payloads_count:
+              type: integer

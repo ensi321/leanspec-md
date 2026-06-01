@@ -1,0 +1,42 @@
+# Frontmatter (parsed by sync_report.py)
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/node/api/endpoints/health.py
+#   - src/lean_spec/node/api/routes.py
+# related_prs: []
+# ---
+
+/lean/v0/health:
+  get:
+    operationId: getHealth
+    summary: Node health check
+    description: |
+      Returns the operational status of the Lean node API.
+
+      Used by external monitors and orchestration layers to confirm the
+      node process is up and the HTTP API is reachable. The endpoint
+      always returns 200 OK when the API is listening; it does not
+      indicate sync or consensus health.
+    tags:
+      - Node
+    responses:
+      '200':
+        description: Server is running.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, service]
+              properties:
+                status:
+                  type: string
+                  enum: [healthy]
+                  description: Fixed string "healthy".
+                service:
+                  type: string
+                  enum: [lean-rpc-api]
+                  description: Fixed service identifier.
+            example:
+              status: "healthy"
+              service: "lean-rpc-api"

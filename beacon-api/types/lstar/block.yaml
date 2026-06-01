@@ -1,0 +1,91 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/spec/forks/lstar/containers.py
+# related_prs: [449, 717]
+# ---
+
+components:
+  schemas:
+    Block:
+      type: object
+      required: [slot, proposer_index, parent_root, state_root, body]
+      properties:
+        slot:
+          $ref: '../primitive.yaml#/components/schemas/Slot'
+        proposer_index:
+          $ref: '../primitive.yaml#/components/schemas/ValidatorIndex'
+        parent_root:
+          $ref: '../primitive.yaml#/components/schemas/Root'
+        state_root:
+          $ref: '../primitive.yaml#/components/schemas/Root'
+        body:
+          $ref: '#/components/schemas/BlockBody'
+      description: See specs/lstar/beacon-chain.md#block.
+
+    BlockBody:
+      type: object
+      required: [attestations]
+      properties:
+        attestations:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: '#/components/schemas/AggregatedAttestation'
+
+    SignedBlock:
+      type: object
+      required: [block, proof]
+      properties:
+        block:
+          $ref: '#/components/schemas/Block'
+        proof:
+          type: string
+          pattern: '^0x[0-9a-fA-F]*$'
+          maxLength: 1048578
+          description: |
+            Hex-encoded serialized TypeTwoMultiSignature.
+            Opaque to JSON consumers; up to 512 KiB raw (≤1048576 hex chars
+            plus 0x prefix).
+
+    BlockHeader:
+      type: object
+      required: [slot, proposer_index, parent_root, state_root, body_root]
+      properties:
+        slot:
+          $ref: '../primitive.yaml#/components/schemas/Slot'
+        proposer_index:
+          $ref: '../primitive.yaml#/components/schemas/ValidatorIndex'
+        parent_root:
+          $ref: '../primitive.yaml#/components/schemas/Root'
+        state_root:
+          $ref: '../primitive.yaml#/components/schemas/Root'
+        body_root:
+          $ref: '../primitive.yaml#/components/schemas/Root'
+
+    AttestationData:
+      type: object
+      required: [slot, head, target, source]
+      properties:
+        slot:
+          $ref: '../primitive.yaml#/components/schemas/Slot'
+        head:
+          $ref: '../api.yaml#/components/schemas/Checkpoint'
+        target:
+          $ref: '../api.yaml#/components/schemas/Checkpoint'
+        source:
+          $ref: '../api.yaml#/components/schemas/Checkpoint'
+
+    AggregatedAttestation:
+      type: object
+      required: [aggregation_bits, data]
+      properties:
+        aggregation_bits:
+          type: string
+          pattern: '^0x[0-9a-fA-F]*$'
+          description: |
+            Hex-encoded SSZ Bitlist; one bit per validator that participated.
+            See specs/lstar/beacon-chain.md#aggregationbits.
+        data:
+          $ref: '#/components/schemas/AttestationData'

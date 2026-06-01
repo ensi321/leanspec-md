@@ -1,0 +1,30 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/node/api/endpoints/fork_choice.py
+#   - src/lean_spec/node/api/routes.py
+# related_prs: []
+# ---
+
+/lean/v0/fork_choice:
+  get:
+    operationId: getForkChoiceView
+    summary: Get fork-choice store view.
+    description: |
+      Returns a snapshot of the node's fork-choice store: known blocks,
+      attestation pools, head, safe target, justified and finalized
+      checkpoints, and validator-local information.
+
+      Used by debugging tools (forkmon, hive simulators) to inspect
+      why a node selected its current head, what attestations it has
+      accepted, and how its checkpoints relate to its peers.
+    tags:
+      - Debug
+    responses:
+      '200':
+        description: Fork-choice store view.
+        content:
+          application/json:
+            schema:
+              $ref: '../../types/fork_choice.yaml#/components/schemas/ForkChoiceView'

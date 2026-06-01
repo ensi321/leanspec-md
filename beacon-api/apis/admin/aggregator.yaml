@@ -1,0 +1,80 @@
+# Frontmatter
+# ---
+# last_synced_commit: 87943be
+# source_files:
+#   - src/lean_spec/node/api/endpoints/aggregator.py
+#   - src/lean_spec/node/api/aggregator_controller.py
+#   - src/lean_spec/node/api/routes.py
+# related_prs: [636]
+# ---
+
+/lean/v0/admin/aggregator:
+  get:
+    operationId: getAggregatorStatus
+    summary: Get current aggregator role status.
+    description: |
+      Returns whether the node is currently configured as an aggregator,
+      plus the configured aggregate subnet IDs.
+
+      lstar-specific admin endpoint; no direct beacon-APIs precedent.
+    tags:
+      - Admin
+    responses:
+      '200':
+        description: Aggregator status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_aggregator, aggregate_subnet_ids]
+              properties:
+                is_aggregator:
+                  type: boolean
+                  description: True when the node performs attestation aggregation.
+                aggregate_subnet_ids:
+                  type: array
+                  items:
+                    type: integer
+                    description: Subnet ID (0 .. ATTESTATION_COMMITTEE_COUNT-1).
+
+  post:
+    operationId: toggleAggregator
+    summary: Toggle aggregator role at runtime.
+    description: |
+      Enables or disables the aggregator role and optionally updates the
+      aggregate subnet ID list without restarting the node.
+
+      A node can switch into aggregator mode only when validator key
+      material is loaded; otherwise the call returns 400.
+    tags:
+      - Admin
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [is_aggregator]
+            properties:
+              is_aggregator:
+                type: boolean
+              aggregate_subnet_ids:
+                type: array
+                items:
+                  type: integer
+    responses:
+      '200':
+        description: New aggregator status.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_aggregator:
+                  type: boolean
+                aggregate_subnet_ids:
+                  type: array
+                  items:
+                    type: integer
+      '400':
+        description: Invalid request (e.g. enabling aggregator without validator keys).

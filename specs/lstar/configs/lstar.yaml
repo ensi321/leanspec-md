@@ -1,0 +1,55 @@
+# lstar runtime configuration
+#
+# Source: src/lean_spec/node/chain/config.py + lstar Config container
+# Synced against leanSpec commit: 87943be
+#
+# These constants are devnet-tunable; values can shift between devnet-N
+# without changing the spec containers. Reflect carefully when comparing
+# against a different release.
+
+# Slot timing
+SECONDS_PER_SLOT: 4
+MILLISECONDS_PER_SLOT: 4000
+INTERVALS_PER_SLOT: 5
+MILLISECONDS_PER_INTERVAL: 800
+# An "interval" is a sub-slot processing tick. With 5 intervals per slot
+# and a 4-second slot, each interval is 800 ms. Fork-choice ticks fire
+# every interval, not just every slot.
+
+# Gossip timing tolerance
+GOSSIP_DISPARITY_INTERVALS: 1
+# Future-slot tolerance for gossip attestations. A validator may admit
+# an attestation whose slot has not yet started locally by this many
+# intervals (roughly 800 ms of clock skew).
+
+# Justification / finality
+JUSTIFICATION_LOOKBACK_SLOTS: 3
+# Slots considered when computing justification eligibility.
+
+# Historical roots
+HISTORICAL_ROOTS_LIMIT: 262144  # 2**18
+# Maximum historical block roots stored in state. With a 4-second slot,
+# this covers approximately 12.1 days of history.
+
+# Validator registry
+VALIDATOR_REGISTRY_LIMIT: 4096  # 2**12
+# Maximum number of validators registered in state.
+
+# Justification window
+IMMEDIATE_JUSTIFICATION_WINDOW: 5
+# The first N slots after finalization are always considered justifiable
+# (the "5" rule of 3SF-mini; see fork-choice.md).
+
+# Attestation grouping
+ATTESTATION_COMMITTEE_COUNT: 1
+# Number of attestation committees per slot.
+
+MAX_ATTESTATIONS_DATA: 8
+# Maximum number of distinct AttestationData entries allowed per block.
+
+# Genesis configuration (per-network)
+#
+# Each devnet ships its own values for these; the lstar Config container
+# carries them in state:
+GENESIS_TIME: ~          # Set by the devnet genesis.yaml
+GENESIS_VALIDATORS: []    # Per-validator XMSS pubkey pairs; see beacon-chain.md
