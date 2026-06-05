@@ -1,9 +1,9 @@
 # Frontmatter
 # ---
-# last_synced_commit: 87943be
+# last_synced_commit: e8014f9
 # source_files:
-#   - src/lean_spec/spec/forks/lstar/containers.py
-# related_prs: [449, 717]
+#   - src/lean_spec/spec/forks/lstar/containers/block.py
+# related_prs: [449, 717, 832, 842, 843]
 # ---
 
 components:

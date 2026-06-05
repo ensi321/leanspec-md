@@ -1,10 +1,12 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
-  - src/lean_spec/spec/forks/lstar/containers.py
-  - src/lean_spec/spec/crypto/xmss/aggregation.py
+  - src/lean_spec/spec/forks/lstar/containers/__init__.py
+  - src/lean_spec/spec/forks/lstar/containers/aggregation.py
+  - src/lean_spec/spec/forks/lstar/containers/block.py
+  - src/lean_spec/spec/forks/lstar/signatures.py
   - src/lean_spec/spec/forks/lstar/spec.py
-related_prs: [717, 735, 753]
+related_prs: [717, 735, 753, 796, 799, 843]
 ---
 
 # Devnet-5
@@ -25,7 +27,7 @@ The current lstar code reflects the devnet-5 shape.
 ## Headline change
 
 Block-level Type-2 proof.
-One serialized `TypeTwoMultiSignature` per block covers:
+One serialized `MultiMessageAggregate` per block covers:
 
 - Every aggregated attestation in `block.body.attestations`.
 - The proposer's signature over `hash_tree_root(block)`.
@@ -49,11 +51,13 @@ Replaces devnet-4's structured `BlockSignatures` (per-`AttestationData` Type-1 l
       block: Block
       signature: BlockSignatures
   
-  # After (devnet-5)
+  # After (devnet-5, initial #717 shape)
   class SignedBlock(Container):
       block: Block
       proof: ByteList512KiB
   ```
+
+  PR #843 later typed the field directly as `proof: MultiMessageAggregate` (see the "Why opaque `ByteList512KiB`" section below for the original rationale and its reversal).
 
 - `BlockBody.attestations` docstring change:
   - Before: "Signatures are in BlockSignatures."
@@ -69,7 +73,7 @@ The structural delta is concentrated in the envelope, not the block.
 
 ## Type-2 multisig (the underlying primitive)
 
-`TypeTwoMultiSignature.aggregate(parts, public_keys_per_part)` merges several Type-1 proofs over distinct messages into one proof.
+`MultiMessageAggregate.aggregate(parts, public_keys_per_part)` merges several Type-1 proofs over distinct messages into one proof.
 
 Block-level usage:
 
@@ -81,20 +85,21 @@ Block-level usage:
 
 Verification path: `Type-2.verify(public_keys_per_message, messages)` checks the merged proof against the per-component pubkey layouts and the per-component message-slot bindings.
 
-## Why opaque `ByteList512KiB`
+## Why opaque `ByteList512KiB` (historical, reversed in #843)
 
-`TypeTwoMultiSignature` is itself a one-field Container wrapping `proof: ByteList512KiB`.
-`SignedBlock.proof` uses the raw bytes type directly rather than wrapping in the Container, because:
+The original #717 shape used `proof: ByteList512KiB` rather than wrapping the typed `MultiMessageAggregate` container, with three justifications at the time:
 
 - Wrapping adds a 4-byte SSZ offset prefix with no semantic gain (the wrapper container has no consensus-visible fields).
 - Hash tree root is identical either way (single-field Container merkleization short-circuits to the inner root).
 - The bytes are opaque to Python (only the leanMultisig Rust binding parses them); naming the field as bytes is honest about the opacity.
 
+PR #843 reversed this decision and typed `SignedBlock.proof` as `MultiMessageAggregate` directly, freezing the whole Block family in the process. Current code carries the typed proof.
+
 ## Other PR #717 changes worth noting
 
 - `MAX_ATTESTATIONS_DATA` reduced to 8 (commit message: "limit max attestation data to 8").
 - Proof size cap reduced to 500 KiB (commit message: "reduce max proof size to 500KiB").
-- Block-attestation deconstruction added: aggregators (and proposers) deconstruct a Type-2 back into per-`AttestationData` Type-1 proofs via `split_by_msg` and re-emit them into the new pool for future aggregation reuse.
+- Block-attestation deconstruction added: aggregators (and proposers) deconstruct a multi-message aggregate back into per-`AttestationData` single-message proofs via `split_by_message` and re-emit them into the new pool for future aggregation reuse.
   Triggered "even in case of proposer, not just for aggregators" per commit history.
 
 ## Open questions raised during devnet-5 review

@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
   - src/lean_spec/node/networking/gossipsub/parameters.py
   - src/lean_spec/node/networking/gossipsub/topic.py
@@ -22,7 +22,7 @@ source_files:
   - src/lean_spec/node/snappy/compress.py
   - src/lean_spec/node/snappy/decompress.py
   - src/lean_spec/node/networking/varint.py
-related_prs: []
+related_prs: [798]
 ---
 
 # p2p Substrate

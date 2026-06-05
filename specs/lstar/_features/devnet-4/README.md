@@ -1,10 +1,12 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
-  - src/lean_spec/spec/forks/lstar/containers.py
-  - src/lean_spec/spec/crypto/xmss/aggregation.py
-  - src/lean_spec/spec/forks/lstar/store.py
+  - src/lean_spec/spec/forks/lstar/containers/__init__.py
+  - src/lean_spec/spec/forks/lstar/containers/aggregation.py
+  - src/lean_spec/spec/forks/lstar/containers/store.py
+  - src/lean_spec/spec/forks/lstar/aggregation.py
+  - src/lean_spec/spec/forks/lstar/signatures.py
 related_prs: [449, 496, 510]
 ---
 

@@ -1,10 +1,23 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
-  - src/lean_spec/spec/forks/lstar/containers.py
+  - src/lean_spec/spec/forks/lstar/_base.py
+  - src/lean_spec/spec/forks/lstar/state_transition.py
+  - src/lean_spec/spec/forks/lstar/signatures.py
+  - src/lean_spec/spec/forks/lstar/slot.py
+  - src/lean_spec/spec/forks/lstar/containers/__init__.py
+  - src/lean_spec/spec/forks/lstar/containers/attestation.py
+  - src/lean_spec/spec/forks/lstar/containers/block.py
+  - src/lean_spec/spec/forks/lstar/containers/checkpoint.py
+  - src/lean_spec/spec/forks/lstar/containers/identifiers.py
+  - src/lean_spec/spec/forks/lstar/containers/interval.py
+  - src/lean_spec/spec/forks/lstar/containers/participation.py
+  - src/lean_spec/spec/forks/lstar/containers/state.py
+  - src/lean_spec/spec/forks/lstar/containers/validator.py
+  - src/lean_spec/spec/forks/lstar/config.py
   - src/lean_spec/spec/forks/lstar/__init__.py
-related_prs: [449, 717]
+related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843]
 ---
 
 # Lean Consensus — Beacon Chain (lstar)
@@ -15,7 +28,7 @@ related_prs: [449, 717]
 - [Custom types](#custom-types)
 - [Configuration](#configuration)
 - [Containers](#containers)
-  - [`Config`](#config)
+  - [`GenesisConfig`](#genesisconfig)
   - [`Validator`](#validator)
   - [`Checkpoint`](#checkpoint)
   - [`AttestationData`](#attestationdata)
@@ -78,7 +91,7 @@ These are concerns either deferred to later forks or covered by the aggregation 
 
 ## Configuration
 
-Constants live in `node/chain/config.py` (see `specs/lstar/configs/lstar.yaml`).
+Constants live in `forks/lstar/config.py` (see `specs/lstar/configs/lstar.yaml`).
 
 | Constant | Value | Use |
 | --- | --- | --- |
@@ -95,14 +108,14 @@ Constants live in `node/chain/config.py` (see `specs/lstar/configs/lstar.yaml`).
 
 ## Containers
 
-### `Config`
+### `GenesisConfig`
 
 ```python
-class Config(Container):
+class GenesisConfig(Container):
     genesis_time: Uint64
 ```
 
-Genesis-time configuration carried by `State`.
+Genesis-time configuration carried by `State` (the slot named `config` on `State` holds a `GenesisConfig`).
 Currently holds only `genesis_time`; future forks may extend.
 
 ### `Validator`
@@ -202,13 +215,13 @@ Lstar does **not** use committees; the `aggregation_bits` cover the full validat
 ```python
 class SignedAggregatedAttestation(Container):
     data: AttestationData
-    proof: TypeOneMultiSignature
+    proof: SingleMessageAggregate
 ```
 
 The aggregator's broadcast envelope.
-Carries the unsigned attestation data and a Type-1 multi-signature proof covering every contributing validator's signature over that data.
+Carries the unsigned attestation data and a single-message aggregate proof covering every contributing validator's signature over that data.
 
-Note: composition (not inheritance) of `AggregatedAttestation`, because the participant bitfield lives **inside** the `TypeOneMultiSignature.participants` field rather than alongside it.
+Note: composition (not inheritance) of `AggregatedAttestation`, because the participant bitfield lives **inside** the `SingleMessageAggregate.participants` field rather than alongside it.
 
 ### `BlockBody`
 
@@ -219,7 +232,9 @@ class BlockBody(Container):
 
 A block's payload.
 A bounded list of aggregated attestations.
-Signatures are not stored here; they fold into the block-level Type-2 proof in `SignedBlock`.
+Signatures are not stored here; they fold into the block-level multi-message aggregate proof in `SignedBlock`.
+
+Frozen.
 
 ### `BlockHeader`
 
@@ -234,6 +249,8 @@ class BlockHeader(Container):
 
 The fixed-shape summary of a block.
 Used in state-transition tracking and state-root caching; never carried separately on the wire.
+
+Frozen.
 
 ### `Block`
 
@@ -250,34 +267,32 @@ A complete block.
 Note that `Block` and `BlockHeader` share four fields and differ only in their final field (`body` vs `body_root`).
 The two are parallel containers, not in an inheritance relationship; this preserves SSZ field ordering as a consensus-critical invariant.
 
+Frozen. PR #843 froze the whole Block family (`BlockBody`, `BlockHeader`, `Block`, `SignedBlock`).
+
 ### `SignedBlock`
 
 ```python
 class SignedBlock(Container):
     block: Block
-    proof: ByteList512KiB
+    proof: MultiMessageAggregate
 ```
 
 A signed-block envelope.
-The `proof` is a serialized `TypeTwoMultiSignature` (see `specs/leansig-aggregation.md`) binding:
+The `proof` is a `MultiMessageAggregate` (see `specs/leansig-aggregation.md`) binding:
 
-- Every aggregated attestation in `block.body.attestations` (one Type-1 component per distinct `AttestationData`).
+- Every aggregated attestation in `block.body.attestations` (one single-message component per distinct `AttestationData`).
 - The proposer's signature over `hash_tree_root(block)` (using the proposer's `proposal_pubkey`).
 
-The proof is `ByteList512KiB` rather than a typed container because:
-
-- The bytes are opaque to Python; only the leanMultisig Rust binding parses them.
-- Wrapping in a one-field container would add a 4-byte SSZ offset prefix for no semantic gain.
-- `hash_tree_root(block)` is preserved as a clean Merkle leaf in `SignedBlock`'s tree.
-
 `SignedBlock` is composed (`block` as a nested field) rather than inheriting `Block` so the block's hash tree root remains a single leaf in the envelope's tree.
+
+Frozen.
 
 ### `State`
 
 ```python
 class State(Container):
     # Configuration
-    config: Config
+    config: GenesisConfig
 
     # Slot tracking
     slot: Slot
@@ -381,12 +396,13 @@ With `ATTESTATION_COMMITTEE_COUNT = 1`, every validator falls in subnet 0; the h
 ### Attestation chain check
 
 ```python
-@staticmethod
-def _attestation_data_matches_chain(
+def attestation_data_matches_chain(
     attestation_data: AttestationData,
     historical_block_hashes: Sequence[Bytes32],
 ) -> bool
 ```
+
+Module-level helper in `state_transition.py`.
 
 Returns True when both the source and target checkpoint roots equal the recorded block roots at their slots.
 Returns False when:
@@ -436,10 +452,7 @@ The full state-transition function is a four-step pipeline:
 ### `state_transition`
 
 ```python
-def state_transition(self, state: State, block: Block, valid_signatures: bool = True) -> State:
-    if not valid_signatures:
-        raise AssertionError("Block signatures must be valid")
-
+def state_transition(self, state: State, block: Block) -> State:
     with observe_state_transition():
         advanced = self.process_slots(state, block.slot)
         new_state = self.process_block(advanced, block)
@@ -450,11 +463,11 @@ def state_transition(self, state: State, block: Block, valid_signatures: bool = 
     return new_state
 ```
 
-1. Check signature validation status (signature verification itself happens earlier in `verify_signatures`).
-2. Advance the state through empty slots up to `block.slot - 1` (see `process_slots`).
-3. Apply the block header and body (`process_block`).
-4. Verify that the computed post-state root equals `block.state_root`.
+1. Advance the state through empty slots up to `block.slot - 1` (see `process_slots`).
+2. Apply the block header and body (`process_block`).
+3. Verify that the computed post-state root equals `block.state_root`.
 
+Signature verification happens outside this function (in the `SignatureMixin` methods on `LstarSpec`) before the caller invokes `state_transition`.
 A failed root match raises `AssertionError`; the caller treats the block as invalid.
 
 ### `process_slots`
@@ -540,7 +553,7 @@ For each `AggregatedAttestation`:
 
 1. **Source must be justified**: skip if `justified_slots.is_slot_justified(finalized_slot, source.slot)` is False.
 2. **Target must not already be justified**: skip if the target slot already has its justified bit set.
-3. **Chain consistency**: skip if `_attestation_data_matches_chain(data, historical_block_hashes)` is False (zero-hash roots, slot out of range, or chain-root mismatch).
+3. **Chain consistency**: skip if `attestation_data_matches_chain(data, historical_block_hashes)` is False (zero-hash roots, slot out of range, or chain-root mismatch).
 4. **Time monotonicity**: skip if `target.slot <= source.slot`.
 5. **Target justifiability**: skip if `target.slot.is_justifiable_after(finalized_slot)` is False (3SF-mini rule).
 6. **Record votes**: initialize `justifications[target.root]` to `[False] * len(validators)` if absent; flip each contributing validator's bit to True.

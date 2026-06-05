@@ -1,9 +1,9 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
-  - src/lean_spec/spec/crypto/xmss/aggregation.py
+  - src/lean_spec/spec/forks/lstar/containers/aggregation.py
   - src/lean_spec/spec/crypto/xmss/containers.py
-related_prs: [282, 318, 322, 449, 496, 717]
+related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824]
 ---
 
 # leanSig Aggregation
@@ -16,14 +16,14 @@ related_prs: [282, 318, 322, 449, 496, 717]
   - [Inverse-rate exponent](#inverse-rate-exponent)
   - [Why proofs carry no public keys](#why-proofs-carry-no-public-keys)
 - [Containers](#containers)
-  - [`TypeOneMultiSignature`](#typeonemulti-signature)
-  - [`TypeTwoMultiSignature`](#typetwomulti-signature)
+  - [`SingleMessageAggregate`](#singlemessageaggregate)
+  - [`MultiMessageAggregate`](#multimessageaggregate)
 - [Operations](#operations)
-  - [Type-1 aggregation](#type-1-aggregation)
-  - [Type-1 verification](#type-1-verification)
-  - [Type-2 aggregation](#type-2-aggregation)
-  - [Type-2 verification](#type-2-verification)
-  - [Type-2 split by message](#type-2-split-by-message)
+  - [Single-message aggregation](#single-message-aggregation)
+  - [Single-message verification](#single-message-verification)
+  - [Multi-message aggregation](#multi-message-aggregation)
+  - [Multi-message verification](#multi-message-verification)
+  - [Multi-message split by message](#multi-message-split-by-message)
 - [Recursive aggregation](#recursive-aggregation)
 - [Errors](#errors)
 - [Devnet evolution](#devnet-evolution)
@@ -91,15 +91,18 @@ A miscount of supplied keys against participant bits causes `AggregationError` t
 
 ## Containers
 
-### `TypeOneMultiSignature`
+The Python containers were renamed in PR #799 (`TypeOneMultiSignature` → `SingleMessageAggregate`, `TypeTwoMultiSignature` → `MultiMessageAggregate`) and relocated out of the crypto layer into `forks/lstar/containers/aggregation.py` (PR #796).
+The underlying Rust binding still uses the `Type-1` / `Type-2` shape vocabulary, so this chapter continues to refer to proof shapes by that name.
+
+### `SingleMessageAggregate`
 
 ```python
-class TypeOneMultiSignature(Container):
+class SingleMessageAggregate(Container):
     participants: AggregationBits
     proof: ByteList512KiB
 ```
 
-Frozen Pydantic container.
+Frozen Pydantic container. The Type-1 proof shape.
 Single-message proof aggregating signatures from many validators.
 Every validator named by `participants` signed the same message for the same slot.
 
@@ -108,19 +111,19 @@ The verifier rederives them from the block body it already trusts.
 
 `__hash__` is content-deterministic via SSZ encoding so instances can be inserted into sets and dicts keyed by content identity.
 
-### `TypeTwoMultiSignature`
+### `MultiMessageAggregate`
 
 ```python
-class TypeTwoMultiSignature(Container):
+class MultiMessageAggregate(Container):
     proof: ByteList512KiB
 ```
 
-Frozen Pydantic container.
+Frozen Pydantic container. The Type-2 proof shape.
 Merged proof covering many distinct messages.
 Each component is a single-message proof over its own message.
 Merging binds the components into one proof a block can carry whole.
 
-Notably, Type-2 does **not** store any participant bitfields.
+Notably, a multi-message aggregate does **not** store any participant bitfields.
 Each component's participants are recovered from the consumer of the proof (the block body, where each aggregated attestation carries its own bitfield).
 A signed block stores this proof as a single serialized blob.
 
@@ -128,18 +131,18 @@ A signed block stores this proof as a single serialized blob.
 
 ## Operations
 
-### Type-1 aggregation
+### Single-message aggregation
 
 ```
-TypeOneMultiSignature.aggregate(
-    children: list[tuple[TypeOneMultiSignature, list[PublicKey]]],
+SingleMessageAggregate.aggregate(
+    children: list[tuple[SingleMessageAggregate, list[PublicKey]]],
     raw_xmss: list[tuple[ValidatorIndex, PublicKey, Signature]],
     message: Bytes32,
     slot: Slot,
-) -> TypeOneMultiSignature
+) -> SingleMessageAggregate
 ```
 
-Fold fresh signatures and child Type-1 proofs into one Type-1.
+Fold fresh signatures and child single-message proofs into one single-message proof.
 
 Two kinds of contribution merge:
 
@@ -156,10 +159,10 @@ An empty list of fresh signers contributes no indices.
 
 The prover compresses all contributions into one proof over the shared message.
 
-### Type-1 verification
+### Single-message verification
 
 ```
-TypeOneMultiSignature.verify(
+SingleMessageAggregate.verify(
     public_keys: list[PublicKey],
     message: Bytes32,
     slot: Slot,
@@ -173,16 +176,16 @@ A miscount raises `AggregationError` immediately; the Rust verifier is only invo
 
 Failure (cryptographic rejection by the Rust verifier) also surfaces as `AggregationError`.
 
-### Type-2 aggregation
+### Multi-message aggregation
 
 ```
-TypeTwoMultiSignature.aggregate(
-    parts: list[TypeOneMultiSignature],
+MultiMessageAggregate.aggregate(
+    parts: list[SingleMessageAggregate],
     public_keys_per_part: list[list[PublicKey]],
-) -> TypeTwoMultiSignature
+) -> MultiMessageAggregate
 ```
 
-Merge several Type-1 proofs over **distinct** messages into one Type-2.
+Merge several single-message proofs over **distinct** messages into one multi-message proof.
 
 Each component is checked against the supplied pubkey list before being forwarded to the prover:
 
@@ -190,20 +193,20 @@ Each component is checked against the supplied pubkey list before being forwarde
 2. Pubkey lists must be in the same order as the participant indices for each component.
 
 Empty input raises `AggregationError`.
-The result is a single Type-2 proof binding every component to its own message.
+The result is a single multi-message proof binding every component to its own message.
 
-The merged Type-2 stores no public keys; the caller is responsible for tracking the key layout used at construction so the same layout can be supplied at verification or split time.
+The merged multi-message proof stores no public keys; the caller is responsible for tracking the key layout used at construction so the same layout can be supplied at verification or split time.
 
-### Type-2 verification
+### Multi-message verification
 
 ```
-TypeTwoMultiSignature.verify(
+MultiMessageAggregate.verify(
     public_keys_per_message: list[list[PublicKey]],
     messages: list[tuple[Bytes32, Slot]],
 ) -> None
 ```
 
-Verify the Type-2 against its per-component bindings.
+Verify the multi-message proof against its per-component bindings.
 
 Each component is bound to one message-slot pair supplied by the caller.
 Without that binding the proof would accept attacker-chosen data resolving to the same keys.
@@ -211,27 +214,27 @@ The parallel lists pin every component to the message it actually signed.
 
 Both lists must have equal length; mismatch raises `AggregationError` immediately.
 
-### Type-2 split by message
+### Multi-message split by message
 
 ```
-TypeTwoMultiSignature.split_by_msg(
+MultiMessageAggregate.split_by_message(
     message: Bytes32,
     public_keys_per_message: list[list[PublicKey]],
     participants: AggregationBits,
-) -> TypeOneMultiSignature
+) -> SingleMessageAggregate
 ```
 
-Recover the Type-1 component bound to one message from a Type-2 merge.
+Recover the single-message component bound to one message from a multi-message merge.
 
 The merged proof stores neither the public keys nor the participant bitfields.
 The prover needs the original key layout to isolate one component; the caller supplies both, drawn from the block attestation this component binds.
 
-The resulting Type-1 carries the supplied `participants` bitfield and the recovered proof bytes.
+The resulting single-message aggregate carries the supplied `participants` bitfield and the recovered proof bytes.
 
 ## Recursive aggregation
 
-The Type-1 `aggregate` operation accepts child Type-1 proofs alongside fresh signers.
-This is the recursive primitive: a previously-aggregated Type-1 can serve as input to a new Type-1 covering an expanded validator set without re-collecting raw signatures.
+The `SingleMessageAggregate.aggregate` operation accepts child proofs alongside fresh signers.
+This is the recursive primitive: a previously-aggregated single-message proof can serve as input to a new one covering an expanded validator set without re-collecting raw signatures.
 
 Why this matters: BLS aggregation is essentially free because pairings are linear.
 XMSS aggregation produces a fresh proof at every step.

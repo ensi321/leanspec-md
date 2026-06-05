@@ -1,11 +1,11 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
-  - src/lean_spec/spec/forks/lstar/spec.py
-  - src/lean_spec/spec/forks/lstar/store.py
-  - src/lean_spec/spec/forks/lstar/aggregation_select.py
-  - src/lean_spec/spec/forks/lstar/containers.py
-related_prs: [449, 717]
+  - src/lean_spec/spec/forks/lstar/aggregation.py
+  - src/lean_spec/spec/forks/lstar/containers/aggregation.py
+  - src/lean_spec/spec/forks/lstar/containers/attestation.py
+  - src/lean_spec/spec/forks/lstar/containers/store.py
+related_prs: [449, 717, 796, 799, 822, 827, 843]
 ---
 
 # Aggregation — lstar (fork-specific)
@@ -45,8 +45,8 @@ In the store this shows up as the dict key type for all three attestation pools:
 
 ```python
 attestation_signatures: dict[AttestationData, set[AttestationSignatureEntry]]
-latest_new_aggregated_payloads: dict[AttestationData, set[TypeOneMultiSignature]]
-latest_known_aggregated_payloads: dict[AttestationData, set[TypeOneMultiSignature]]
+latest_new_aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]]
+latest_known_aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]]
 ```
 
 A block may carry **up to `MAX_ATTESTATIONS_DATA` (8) distinct `AttestationData` entries**.
@@ -117,7 +117,7 @@ For each such data entry:
 
 1. **`select_greedily(new.get(data), known.get(data))`** picks a subset of existing Type-1 proofs that maximizes covered validators, preferring new over known.
 2. **Fill** with raw gossip signatures for validators not yet covered (sorted by validator index for determinism).
-3. **`TypeOneMultiSignature.aggregate(children, raw_xmss, message=hash_tree_root(data), slot=data.slot)`** produces one Type-1 covering the union of all contributing validators.
+3. **`SingleMessageAggregate.aggregate(children, raw_xmss, message=hash_tree_root(data), slot=data.slot)`** produces one Type-1 covering the union of all contributing validators.
 4. Wrap as `SignedAggregatedAttestation(data, proof)` and add to the broadcast list.
 
 After the loop, `latest_new_aggregated_payloads` is reset and reseeded with the freshly produced proofs.
@@ -134,7 +134,7 @@ When the proposer's `produce_block_with_signatures` builds a block:
 3. That signature is wrapped as a singleton Type-1 (proposer is the sole signer; participants bitfield names only the proposer's index):
 
    ```
-   proposer_type1 = TypeOneMultiSignature.aggregate(
+   proposer_type1 = SingleMessageAggregate.aggregate(
        children=[],
        raw_xmss=[(proposer_index, proposer_proposal_pubkey, proposer_signature)],
        message=hash_tree_root(block),
@@ -144,7 +144,7 @@ When the proposer's `produce_block_with_signatures` builds a block:
 4. All Type-1 proofs (per-attestation + proposer singleton) are merged via Type-2 aggregation:
 
    ```
-   type2 = TypeTwoMultiSignature.aggregate(
+   type2 = MultiMessageAggregate.aggregate(
        parts=[proposer_type1, *per_attestation_signatures],
        public_keys_per_part=[
            [proposer_proposal_pubkey],
@@ -152,13 +152,13 @@ When the proposer's `produce_block_with_signatures` builds a block:
        ],
    )
    ```
-5. The serialized Type-2 proof becomes `SignedBlock.proof`:
+5. The `MultiMessageAggregate` becomes `SignedBlock.proof` directly (PR #843 typed this field — previously `ByteList512KiB`):
 
    ```
-   signed = SignedBlock(block=block, proof=ByteList512KiB(data=type2.proof.data))
+   signed = SignedBlock(block=block, proof=block_proof)
    ```
 
-The block carries **one** Type-2 proof covering every attestation in the body plus the proposer's own block-root signature.
+The block carries **one** multi-message aggregate proof covering every attestation in the body plus the proposer's own block-root signature.
 
 ## On-block deconstruction
 
@@ -173,7 +173,7 @@ Consequence: a block's attestations contribute **zero weight** to the head compu
 The recovered Type-1 proofs reach the pools later through the gossip path (when aggregators in the next round see the same attestations, re-aggregate, and broadcast).
 Head weight from block-imported votes is deferred by up to one slot.
 
-The Type-2 → Type-1 split-by-message operation exists on the substrate (`TypeTwoMultiSignature.split_by_msg`) and could in principle be used by validators to deconstruct an imported Type-2 into per-data Type-1s; that path is currently only invoked when a validator wants to re-emit the per-data proofs back into its own pool for future aggregation reuse.
+The multi-message → single-message split-by-message operation exists on the substrate (`MultiMessageAggregate.split_by_message`) and could in principle be used by validators to deconstruct an imported multi-message proof into per-data single-message proofs; that path is currently only invoked when a validator wants to re-emit the per-data proofs back into its own pool for future aggregation reuse.
 
 ## Devnet shape history
 
@@ -182,6 +182,6 @@ See `specs/lstar/_features/devnet-4/README.md` and `_features/devnet-5/README.md
 Summary:
 
 - **devnet-3 → devnet-4** (PR #449, #496, #510): grouping switched from per-committee to per-`AttestationData`; recursive aggregation primitive landed; block-body Type-1 list per `AttestationData`.
-- **devnet-4 → devnet-5** (PR #717): the per-`AttestationData` Type-1 list collapsed into one block-level Type-2; `SignedBlock.signature: BlockSignatures` (structured) replaced by `SignedBlock.proof: ByteList512KiB` (opaque).
+- **devnet-4 → devnet-5** (PR #717): the per-`AttestationData` Type-1 list collapsed into one block-level Type-2; `SignedBlock.signature: BlockSignatures` (structured) replaced by `SignedBlock.proof` (opaque bytes initially; later typed as `MultiMessageAggregate` in PR #843).
 
 The grouping discipline (one proof per distinct `AttestationData`) survives both transitions; what changes is whether the proofs are carried as a list or merged.

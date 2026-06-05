@@ -1,10 +1,13 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
-  - src/lean_spec/spec/forks/lstar/spec.py
-  - src/lean_spec/spec/forks/lstar/store.py
-  - src/lean_spec/spec/forks/lstar/aggregation_select.py
-related_prs: [449, 717]
+  - src/lean_spec/spec/forks/lstar/fork_choice.py
+  - src/lean_spec/spec/forks/lstar/aggregation.py
+  - src/lean_spec/spec/forks/lstar/timeline.py
+  - src/lean_spec/spec/forks/lstar/containers/store.py
+  - src/lean_spec/spec/forks/lstar/containers/interval.py
+  - src/lean_spec/spec/forks/lstar/_base.py
+related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827]
 ---
 
 # Fork Choice — lstar
@@ -72,17 +75,17 @@ The interval index resets to 0 at the start of each slot.
 ```python
 class Store[StateT: Container, BlockT: Container](StrictBaseModel):
     time: Interval                  # current time in intervals since genesis
-    config: Config                  # chain configuration
+    config: GenesisConfig           # chain configuration
     head: Bytes32                   # canonical head root
     safe_target: Bytes32            # current safe target root
     latest_justified: Checkpoint
     latest_finalized: Checkpoint
     blocks: dict[Bytes32, BlockT]
     states: dict[Bytes32, StateT]
-    validator_id: ValidatorIndex | None
+    validator_index: ValidatorIndex | None
     attestation_signatures: dict[AttestationData, set[AttestationSignatureEntry]]
-    latest_new_aggregated_payloads: dict[AttestationData, set[TypeOneMultiSignature]]
-    latest_known_aggregated_payloads: dict[AttestationData, set[TypeOneMultiSignature]]
+    latest_new_aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]]
+    latest_known_aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]]
 ```
 
 `LstarStore = Store[State, Block]` is the concrete specialization owned by the lstar fork.
@@ -97,7 +100,7 @@ class Store[StateT: Container, BlockT: Container](StrictBaseModel):
 | `safe_target` | Deepest descendant of `latest_justified` with at least 2/3 supermajority among **new** payloads |
 | `latest_justified` | Most recent justified checkpoint advanced forward only |
 | `latest_finalized` | Most recent finalized checkpoint advanced forward only |
-| `validator_id` | Local validator's index, or `None` for passive nodes |
+| `validator_index` | Local validator's index, or `None` for passive nodes |
 
 ### Block and state caches
 
@@ -115,8 +118,8 @@ Three pools track attestation evidence in three lifecycle stages.
 | Pool | Type | Contains |
 | --- | --- | --- |
 | `attestation_signatures` | `dict[AttestationData, set[AttestationSignatureEntry]]` | Per-validator raw XMSS signatures collected by aggregators from gossip |
-| `latest_new_aggregated_payloads` | `dict[AttestationData, set[TypeOneMultiSignature]]` | Type-1 aggregates not yet contributing to head weight |
-| `latest_known_aggregated_payloads` | `dict[AttestationData, set[TypeOneMultiSignature]]` | Type-1 aggregates contributing to head weight |
+| `latest_new_aggregated_payloads` | `dict[AttestationData, set[SingleMessageAggregate]]` | Single-message aggregates not yet contributing to head weight |
+| `latest_known_aggregated_payloads` | `dict[AttestationData, set[SingleMessageAggregate]]` | Single-message aggregates contributing to head weight |
 
 Lifecycle:
 
@@ -133,7 +136,7 @@ fork choice weight
 ```
 
 Block-imported attestations bypass the new pool: `on_block` records the data key in `latest_known_aggregated_payloads` with an empty proof set.
-The Type-2 block proof is verified as a whole, not decomposed; per-attestation proofs reach the pools later through the gossip path.
+The multi-message aggregate carried in `SignedBlock.proof` is verified as a whole, not decomposed; per-attestation proofs reach the pools later through the gossip path.
 
 Consequence: a block's own attestations contribute **zero weight** to the head computation triggered by that block's import.
 Head weight from block-imported votes is deferred by up to one slot.
@@ -142,7 +145,7 @@ Head weight from block-imported votes is deferred by up to one slot.
 
 ```python
 class AttestationSignatureEntry(NamedTuple):
-    validator_id: ValidatorIndex
+    validator_index: ValidatorIndex
     signature: Signature
 ```
 
@@ -156,15 +159,15 @@ def create_store(
     self,
     state: SpecStateType,
     anchor_block: SpecBlockType,
-    validator_id: ValidatorIndex | None,
-) -> SpecStoreType
+    validator_index: ValidatorIndex | None,
+) -> LstarStore
 ```
 
-Constructs the store from a `(state, anchor_block, validator_id)` triple.
+Constructs the store from a `(state, anchor_block, validator_index)` triple.
 The anchor is either the genesis pair (when the node starts fresh) or a checkpoint-sync result.
 
-The anchor pins `latest_justified` and `latest_finalized` at the supplied state's checkpoints.
-The `Store.from_anchor` classmethod (from `SpecStoreType`) performs the actual construction.
+`create_store` lives on `ForkChoiceMixin` and treats the anchor block as the new genesis for fork choice: both `latest_justified` and `latest_finalized` are seeded from the anchor block's root and slot, irrespective of what the anchor state's embedded checkpoints say.
+The anchor block's `state_root` must match `hash_tree_root(state)`, else construction asserts.
 
 ## Handlers
 
@@ -181,8 +184,8 @@ Process a new signed block.
 3. **Body validity**:
    - Reject blocks with duplicate `AttestationData` entries.
    - Reject blocks with more than `MAX_ATTESTATIONS_DATA` (8) distinct entries.
-4. **Verify signatures**: `verify_signatures(signed_block, parent_state.validators)` checks the Type-2 block proof against the parent state's validator pubkeys.
-5. **State transition**: `state_transition(parent_state, block, valid_signatures)` produces the post-state.
+4. **Verify signatures**: `verify_signatures(signed_block, parent_state.validators)` checks the block's multi-message aggregate proof against the parent state's validator pubkeys.
+5. **State transition**: `state_transition(parent_state, block)` produces the post-state. Signature verification has already happened at step 4 — `state_transition` no longer carries a `valid_signatures` parameter (dropped in #806).
 6. **Checkpoint propagation**: `latest_justified` and `latest_finalized` advance via `advance_to` (forward only; ties keep the existing root).
 7. **Register block in known pool**: for each `aggregated_attestation` in the body, ensure `latest_known_aggregated_payloads[data]` exists (with empty proof set if new).
 8. **Recompute head**: `update_head(store)`.
@@ -203,7 +206,7 @@ Process a single-validator attestation received via gossip.
 
 1. **`validate_attestation(store, signed_attestation.data)`**: see below.
 2. **State lookup**: assert `store.states[data.target.root]` exists; needed for the validator's pubkey.
-3. **Validator bounds**: assert `signed_attestation.validator_id.is_valid(len(validators))`.
+3. **Validator bounds**: assert `signed_attestation.validator_index.is_valid(len(validators))`.
 4. **Signature verify**: `TARGET_SIGNATURE_SCHEME.verify(pubkey, slot, hash_tree_root(data), signature)`.
 5. **Aggregator storage**: if `is_aggregator`, record the entry in `attestation_signatures[data]`.
    Non-aggregator nodes validate then drop.
@@ -225,7 +228,7 @@ Process an aggregator's broadcast.
 1. **`validate_attestation(store, data)`**.
 2. **State lookup**: assert `store.states[data.target.root]` exists.
 3. **Validator bounds**: assert every validator named by `proof.participants` is in range.
-4. **Type-1 verification**: `proof.verify(public_keys=[...attestation_pubkey...], message=hash_tree_root(data), slot=data.slot)`.
+4. **Single-message verification**: `proof.verify(public_keys=[...attestation_pubkey...], message=hash_tree_root(data), slot=data.slot)`.
 5. **Pool insert**: add the proof to `latest_new_aggregated_payloads[data]`.
 
 A failed verification surfaces as `AssertionError`; the aggregator's broadcast is dropped without affecting other handlers.
@@ -317,9 +320,9 @@ The bound is in intervals, not slots: a whole-slot margin would let an adversary
 ### Signature verification
 
 `verify_signatures(signed_block, parent_state.validators)` is the entry point for block-level signature checks.
-It walks `signed_block.proof` (the Type-2 block proof) against the per-aggregated-attestation data plus the block-root binding for the proposer signature.
+It walks `signed_block.proof` (the `MultiMessageAggregate` block proof) against the per-aggregated-attestation data plus the block-root binding for the proposer signature.
 
-Cross-reference: `specs/leansig-aggregation.md` for Type-2 verification mechanics.
+Cross-reference: `specs/leansig-aggregation.md` for multi-message verification mechanics.
 
 ## Head computation (LMD-GHOST)
 
@@ -329,7 +332,7 @@ Cross-reference: `specs/leansig-aggregation.md` for Type-2 verification mechanic
 def extract_attestations_from_aggregated_payloads(
     self,
     store: LstarStore,
-    aggregated_payloads: dict[AttestationData, set[TypeOneMultiSignature]],
+    aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]],
 ) -> dict[ValidatorIndex, AttestationData]
 ```
 
@@ -353,6 +356,9 @@ The walk terminates when:
 
 - The current root is unknown (missing parent during partial sync).
 - The block's slot is at or below the finalized slot.
+
+PR #818 clamped the attestation target walk to the finalized boundary explicitly so votes targeting blocks at or below the finalized slot are skipped rather than walked into pre-finalized history.
+PR #820 dropped aggregated payloads whose target falls at or below the finalized slot from fork-choice weighting; they remain in storage but no longer move head weight.
 
 ### `_compute_lmd_ghost_head`
 
@@ -451,8 +457,8 @@ def aggregate(
 ) -> tuple[LstarStore, list[SignedAggregatedAttestation]]
 ```
 
-Runs at interval 2 for aggregators.
-Turns raw validator signatures into compact Type-1 aggregates.
+Lives on `AggregationMixin` (`spec/forks/lstar/aggregation.py`); runs at interval 2 for aggregators.
+Turns raw validator signatures into compact single-message aggregates.
 
 For each unique `AttestationData` that has either a new payload or a raw gossip signature:
 
@@ -461,12 +467,12 @@ For each unique `AttestationData` that has either a new payload or a raw gossip 
    - Prefer **new** payloads over **known** (new = uncommitted to chain; known = previously accepted).
    - Output: `(child_proofs, covered_validator_indices)`.
 2. **Fill**:
-   - For every validator with a raw gossip signature whose index is **not** in `covered`, build a `(validator_id, attestation_pubkey, signature)` entry.
+   - For every validator with a raw gossip signature whose index is **not** in `covered`, build a `(validator_index, attestation_pubkey, signature)` entry.
    - Sort by validator index for determinism.
 3. **Skip** if `not raw_entries and len(child_proofs) < 2` — a single child proof is already valid, nothing to combine.
 4. **Aggregate**:
    - Pair each child proof with its participants' attestation pubkeys.
-   - Call `TypeOneMultiSignature.aggregate(children, raw_xmss, message=hash_tree_root(data), slot=data.slot)`.
+   - Call `SingleMessageAggregate.aggregate(children, raw_xmss, message=hash_tree_root(data), slot=data.slot)`.
    - Wrap in `SignedAggregatedAttestation(data=data, proof=proof)`.
 
 After all data entries are processed:
@@ -478,7 +484,7 @@ Returns the updated store plus the list of produced `SignedAggregatedAttestation
 
 ### `select_greedily`
 
-Source: `spec/forks/lstar/aggregation_select.py`
+Source: `spec/forks/lstar/aggregation.py` (folded back from the deleted `aggregation_select.py` module in #827).
 
 A greedy proof-selection helper used by `aggregate`.
 Given the new and known payload sets for one `AttestationData`, pick a subset of proofs that maximizes covered validators while preferring new over known.

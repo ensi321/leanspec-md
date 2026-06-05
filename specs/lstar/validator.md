@@ -1,11 +1,15 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
-  - src/lean_spec/spec/forks/lstar/spec.py
-  - src/lean_spec/spec/forks/lstar/aggregation_select.py
+  - src/lean_spec/spec/forks/lstar/validator_duties.py
+  - src/lean_spec/spec/forks/lstar/block_production.py
+  - src/lean_spec/spec/forks/lstar/aggregation.py
+  - src/lean_spec/spec/forks/lstar/signatures.py
+  - src/lean_spec/spec/forks/lstar/timeline.py
+  - src/lean_spec/spec/forks/lstar/slot.py
   - src/lean_spec/node/validator/service.py
   - src/lean_spec/node/validator/registry.py
-related_prs: [449, 717]
+related_prs: [449, 717, 796, 799, 800, 808, 817, 819, 827, 843]
 ---
 
 # Validator — lstar
@@ -37,7 +41,7 @@ A validator in lstar has two duties:
 1. **Attestation**: every slot, sign an `AttestationData` reflecting the validator's view of the chain.
 2. **Block proposal**: when round-robin proposer selection picks this validator's index, build and sign a block.
 
-A subset of validators additionally serve as **aggregators**, combining gossiped individual attestations into Type-1 multi-signature proofs.
+A subset of validators additionally serve as **aggregators**, combining gossiped individual attestations into `SingleMessageAggregate` proofs (the Type-1 shape).
 
 Each duty signs with a **different XMSS key**:
 
@@ -65,7 +69,7 @@ A validator's two `Bytes52` pubkeys (`attestation_pubkey`, `proposal_pubkey`) ca
 | --- | --- |
 | 0 | Block proposal (if this validator is proposer for current slot) |
 | 1 | Attestation production + signing + gossip broadcast |
-| 2 | Aggregator: build Type-1 aggregates from gossip signatures, broadcast |
+| 2 | Aggregator: build `SingleMessageAggregate`s from gossip signatures, broadcast |
 | 3 | (no validator action; safe-target updates server-side) |
 | 4 | (no validator action; pool migration server-side) |
 
@@ -126,7 +130,7 @@ def produce_block_with_signatures(
     store: LstarStore,
     slot: Slot,
     validator_index: ValidatorIndex,
-) -> tuple[LstarStore, Block, list[TypeOneMultiSignature]]
+) -> tuple[LstarStore, Block, list[SingleMessageAggregate]]
 ```
 
 Top-level block production entry point.
@@ -143,12 +147,12 @@ Top-level block production entry point.
 
 Returns `(store, final_block, per_attestation_signatures)`.
 
-The returned `signatures` list contains **per-attestation Type-1 proofs**, **unmerged**.
+The returned `signatures` list contains **per-attestation single-message proofs**, **unmerged**.
 The validator service then:
 
 - Signs `hash_tree_root(block)` with the proposal key.
-- Wraps that signature into a singleton Type-1.
-- Merges all Type-1 proofs (including the proposer's) into the block-level Type-2 proof carried by `SignedBlock.proof`.
+- Wraps that signature into a singleton `SingleMessageAggregate`.
+- Merges all single-message proofs (including the proposer's) into the block-level `MultiMessageAggregate` carried by `SignedBlock.proof`.
 
 ### `build_block`
 
@@ -160,8 +164,8 @@ def build_block(
     proposer_index: ValidatorIndex,
     parent_root: Bytes32,
     known_block_roots: AbstractSet[Bytes32],
-    aggregated_payloads: dict[AttestationData, set[TypeOneMultiSignature]] | None = None,
-) -> tuple[Block, State, list[AggregatedAttestation], list[TypeOneMultiSignature]]
+    aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]] | None = None,
+) -> tuple[Block, State, list[AggregatedAttestation], list[SingleMessageAggregate]]
 ```
 
 Construct a block from a pre-state by:
@@ -170,7 +174,7 @@ Construct a block from a pre-state by:
 2. Greedily selecting proofs that maximize new validator coverage.
 3. Applying the state transition function to the candidate body.
 4. If justification advances (the new `latest_justified` is higher), repeat with the new checkpoint.
-5. Otherwise, return the block with the chosen attestations, the post-state, the chosen `AggregatedAttestation` list, and the corresponding per-attestation Type-1 proofs.
+5. Otherwise, return the block with the chosen attestations, the post-state, the chosen `AggregatedAttestation` list, and the corresponding per-attestation single-message proofs.
 
 The fixed-point loop is necessary because adding attestations can advance the justified checkpoint, which unlocks more `AttestationData` entries whose source now matches.
 
@@ -190,7 +194,7 @@ signature = TARGET_SIGNATURE_SCHEME.sign(
     slot=slot,
     message=message,
 )
-signed = SignedAttestation(validator_id=index, data=data, signature=signature)
+signed = SignedAttestation(validator_index=index, data=data, signature=signature)
 gossip_publish(signed, topic=f"/leanconsensus/{GOSSIP_DIGEST}/attestation_{subnet}/ssz_snappy")
 ```
 
@@ -208,25 +212,25 @@ proposer_signature = TARGET_SIGNATURE_SCHEME.sign(
     slot=slot,
     message=block_root,
 )
-# Wrap as singleton Type-1
-proposer_type1 = TypeOneMultiSignature.aggregate(
+# Wrap as singleton single-message aggregate
+proposer_singleton = SingleMessageAggregate.aggregate(
     children=[],
     raw_xmss=[(validator_index, proposal_pubkey, proposer_signature)],
     message=block_root,
     slot=slot,
 )
-# Merge proposer Type-1 with per-attestation Type-1s into block-level Type-2
-type2 = TypeTwoMultiSignature.aggregate(
-    parts=[proposer_type1, *per_attestation_signatures],
+# Merge proposer singleton with per-attestation singles into block-level multi-message proof
+block_proof = MultiMessageAggregate.aggregate(
+    parts=[proposer_singleton, *per_attestation_signatures],
     public_keys_per_part=[[proposal_pubkey], *attestation_pubkey_lists],
 )
-signed_block = SignedBlock(block=final_block, proof=ByteList512KiB(data=type2.proof.data))
+signed_block = SignedBlock(block=final_block, proof=block_proof)
 gossip_publish(signed_block, topic=f"/leanconsensus/{GOSSIP_DIGEST}/block/ssz_snappy")
 ```
 
 Signs the **block root** with the **proposal key**.
 
-The Type-2 merge folds the proposer signature plus every per-attestation Type-1 into one proof — the `proof: ByteList512KiB` field of `SignedBlock`.
+The multi-message merge folds the proposer signature plus every per-attestation single-message proof into one `MultiMessageAggregate` — the `proof` field of `SignedBlock`. PR #843 typed this field directly (previously `ByteList512KiB`).
 
 ## Aggregator role
 

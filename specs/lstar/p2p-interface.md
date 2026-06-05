@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
   - src/lean_spec/node/networking/gossipsub/topic.py
   - src/lean_spec/node/networking/reqresp/message.py

@@ -1,10 +1,10 @@
 ---
-last_synced_commit: 87943be
+last_synced_commit: e8014f9
 source_files:
   - src/lean_spec/spec/forks/__init__.py
   - src/lean_spec/spec/forks/protocol.py
   - src/lean_spec/spec/forks/registry.py
-related_prs: [638, 686]
+related_prs: [638, 686, 800, 804]
 ---
 
 # Fork Protocol
@@ -21,11 +21,8 @@ related_prs: [638, 686]
   - [`SpecBlockBodyType`](#specblockbodytype)
   - [`SpecBlockHeaderType`](#specblockheadertype)
   - [`SpecAggregatedAttestationsType`](#specaggregatedattestationstype)
-  - [`SpecSignedBlockType`](#specsignedblocktype)
   - [`SpecAttestationDataType`](#specattestationdatatype)
-  - [`SpecSignedAttestationType`](#specsignedattestationtype)
   - [`SpecAggregatedAttestationType`](#specaggregatedattestationtype)
-  - [`SpecSignedAggregatedAttestationType`](#specsignedaggregatedattestationtype)
   - [`SpecStoreType`](#specstoretype)
 - [Nominal interface: `ForkProtocol`](#nominal-interface-forkprotocol)
   - [Identity fields](#identity-fields)
@@ -116,16 +113,6 @@ Carries the proposer, parent root, state root, and body root.
 A bounded SSZ list of aggregated attestations included in a block body.
 Extends `SpecSSZType` and adds no further members.
 
-### `SpecSignedBlockType`
-
-A signed-block envelope wrapping a Block plus its aggregated proof of every attestation in the body and the proposer's signature over the block root.
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `block` | `SpecBlockType` | The wrapped block |
-
-Sync, gossip, and storage treat instances as opaque SSZ payloads passed between services.
-
 ### `SpecAttestationDataType`
 
 A validator's view of the chain at the point of signing.
@@ -137,15 +124,6 @@ A validator's view of the chain at the point of signing.
 | `source` | `Checkpoint` | The source checkpoint of the attestation |
 | `target` | `Checkpoint` | The target checkpoint of the attestation |
 
-### `SpecSignedAttestationType`
-
-A single validator's attestation bundled with its individual signature.
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `data` | `SpecAttestationDataType` | The unsigned attestation payload |
-| `validator_id` | `ValidatorIndex` | The validator that produced this attestation |
-
 ### `SpecAggregatedAttestationType`
 
 An attestation aggregated over multiple validators via a participation bitfield.
@@ -156,19 +134,12 @@ An attestation aggregated over multiple validators via a participation bitfield.
 
 The aggregation bitfield itself is consensus-visible but not required by the protocol shape; the concrete container exposes it directly.
 
-### `SpecSignedAggregatedAttestationType`
-
-The aggregator's broadcast payload, combining attestation data with the aggregated signature proof.
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `data` | `SpecAttestationDataType` | The unsigned attestation payload |
-
 ### `SpecStoreType`
 
 The forkchoice store surface that sync, chain, and node services drive without depending on a concrete fork.
 
-#### Required properties
+The protocol surface is **read-only**: only properties, no methods.
+Concrete fork stores carry the mutation methods (`from_anchor`, `on_block`, `on_gossip_attestation`, ...) but those are not part of the cross-fork contract.
 
 | Property | Type | Description |
 | --- | --- | --- |
@@ -176,21 +147,9 @@ The forkchoice store surface that sync, chain, and node services drive without d
 | `safe_target` | `Bytes32` | Root of the current safe target block |
 | `latest_justified` | `Checkpoint` | Most recent justified checkpoint |
 | `latest_finalized` | `Checkpoint` | Most recent finalized checkpoint |
-| `validator_id` | `ValidatorIndex | None` | Index of the local validator owning this store, if any |
+| `validator_index` | `ValidatorIndex | None` | Index of the local validator owning this store, if any |
 | `blocks` | `Mapping[Bytes32, SpecBlockType]` | Mapping from block root to known block |
 | `states` | `Mapping[Bytes32, SpecStateType]` | Mapping from block root to post-state of that block |
-
-#### Required methods
-
-| Method | Description |
-| --- | --- |
-| `from_anchor(state, anchor_block, validator_id) -> Self` | Construct a forkchoice store anchored at the given state and block |
-| `on_block(signed_block) -> Self` | Apply a signed block to the store and return the updated store |
-| `on_gossip_attestation(signed_attestation, is_aggregator) -> Self` | Apply a single-validator attestation and return the updated store |
-| `on_gossip_aggregated_attestation(signed_attestation) -> Self` | Apply an aggregated attestation and return the updated store |
-
-The implementing fork is free to add further methods.
-Only the listed surface is part of the cross-fork contract.
 
 ## Nominal interface: `ForkProtocol`
 
@@ -214,7 +173,7 @@ class MyFork(ForkProtocol):
     store_class = Store
     attestation_data_class = AttestationData
     aggregated_attestation_class = AggregatedAttestation
-    config_class = Config
+    genesis_config_class = GenesisConfig
 
     # abstract methods
     def generate_genesis(self, ...): ...
@@ -246,10 +205,9 @@ Each slot is typed by a structural protocol from the previous section; the assig
 | `store_class` | `SpecStoreType` | `LstarStore` |
 | `attestation_data_class` | `SpecAttestationDataType` | `AttestationData` |
 | `aggregated_attestation_class` | `SpecAggregatedAttestationType` | `AggregatedAttestation` |
-| `config_class` | `SpecConfigType` | `Config` |
+| `genesis_config_class` | `SpecConfigType` | `GenesisConfig` |
 
-Additional Spec*Type protocols (`SpecSignedBlockType`, `SpecSignedAttestationType`, `SpecSignedAggregatedAttestationType`) are referenced by Store method signatures but not held in dedicated slots.
-A fork still defines concrete classes for them; they reach the runtime through method signatures on the Store.
+Signed envelopes (`SignedBlock`, `SignedAttestation`, `SignedAggregatedAttestation`) are not held in dedicated slots and are no longer named in the protocol layer; concrete fork stores reference them directly through their own method signatures.
 
 ### Abstract methods
 
@@ -274,7 +232,7 @@ def create_store(
     self,
     state: SpecStateType,
     anchor_block: SpecBlockType,
-    validator_id: ValidatorIndex | None,
+    validator_index: ValidatorIndex | None,
 ) -> SpecStoreType
 ```
 
