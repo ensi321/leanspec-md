@@ -1,10 +1,10 @@
 ---
-last_synced_commit: e8014f9
+last_synced_commit: 8e28a19
 source_files:
   - src/lean_spec/spec/forks/__init__.py
   - src/lean_spec/spec/forks/protocol.py
   - src/lean_spec/spec/forks/registry.py
-related_prs: [638, 686, 800, 804]
+related_prs: [638, 686, 800, 804, 882, 883]
 ---
 
 # Fork Protocol
@@ -15,14 +15,8 @@ related_prs: [638, 686, 800, 804]
 - [Two layers of typing](#two-layers-of-typing)
 - [Structural protocols](#structural-protocols)
   - [`SpecSSZType`](#specssz-type)
-  - [`SpecConfigType`](#specconfigtype)
   - [`SpecStateType`](#specstatetype)
   - [`SpecBlockType`](#specblocktype)
-  - [`SpecBlockBodyType`](#specblockbodytype)
-  - [`SpecBlockHeaderType`](#specblockheadertype)
-  - [`SpecAggregatedAttestationsType`](#specaggregatedattestationstype)
-  - [`SpecAttestationDataType`](#specattestationdatatype)
-  - [`SpecAggregatedAttestationType`](#specaggregatedattestationtype)
   - [`SpecStoreType`](#specstoretype)
 - [Nominal interface: `ForkProtocol`](#nominal-interface-forkprotocol)
   - [Identity fields](#identity-fields)
@@ -59,8 +53,8 @@ They satisfy a protocol by exposing the same field names and methods, and the ty
 
 ## Structural protocols
 
-Every structural protocol below extends `SpecSSZType`, so every fork container is required to expose SSZ encode and decode methods at minimum.
-Specific protocols add further required properties.
+Four structural protocols remain after PR #882 collapsed the unused payload-type zoo: `SpecSSZType`, `SpecStateType`, `SpecBlockType`, and `SpecStoreType`.
+Payload class slots on `ForkProtocol` (block body, header, attestation data, etc.) are now typed as `type[SpecSSZType]`; the concrete narrowing happens in each fork's typed base class.
 
 ### `SpecSSZType`
 
@@ -71,11 +65,6 @@ The base protocol every consensus container satisfies.
 | `encode_bytes() -> bytes` | method | Serialize the container to SSZ bytes |
 | `decode_bytes(data) -> Self` | classmethod | Deserialize SSZ bytes into a new container instance |
 
-### `SpecConfigType`
-
-The genesis configuration container exposed by a fork.
-Extends `SpecSSZType` and adds no further members; the marker exists to constrain typing at fork boundaries.
-
 ### `SpecStateType`
 
 The consensus state container.
@@ -83,7 +72,7 @@ The consensus state container.
 | Property | Type | Description |
 | --- | --- | --- |
 | `slot` | `Slot` | The current slot of this state |
-| `config` | `SpecConfigType` | Genesis configuration carried by the state |
+| `config` | `SpecSSZType` | Genesis configuration carried by the state |
 
 ### `SpecBlockType`
 
@@ -95,44 +84,6 @@ A block container.
 | `proposer_index` | `ValidatorIndex` | The validator index of the proposer |
 | `parent_root` | `Bytes32` | The SSZ root of the parent block |
 | `state_root` | `Bytes32` | The SSZ root of the post-state produced by this block |
-
-### `SpecBlockBodyType`
-
-A block body. Extends `SpecSSZType` and adds no further members.
-The variable-size payload attached to a block.
-Holds aggregated attestations and any future operation lists.
-
-### `SpecBlockHeaderType`
-
-A block header. Extends `SpecSSZType` and adds no further members.
-The fixed-shape summary of a block used in state-transition tracking and state-root caching.
-Carries the proposer, parent root, state root, and body root.
-
-### `SpecAggregatedAttestationsType`
-
-A bounded SSZ list of aggregated attestations included in a block body.
-Extends `SpecSSZType` and adds no further members.
-
-### `SpecAttestationDataType`
-
-A validator's view of the chain at the point of signing.
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `slot` | `Slot` | The slot the attestation is voting at |
-| `head` | `Checkpoint` | The head checkpoint the attestation votes for |
-| `source` | `Checkpoint` | The source checkpoint of the attestation |
-| `target` | `Checkpoint` | The target checkpoint of the attestation |
-
-### `SpecAggregatedAttestationType`
-
-An attestation aggregated over multiple validators via a participation bitfield.
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `data` | `SpecAttestationDataType` | The unsigned attestation payload |
-
-The aggregation bitfield itself is consensus-visible but not required by the protocol shape; the concrete container exposes it directly.
 
 ### `SpecStoreType`
 
@@ -192,22 +143,23 @@ class MyFork(ForkProtocol):
 
 ### Container class slots
 
-A fork wires nine concrete container classes into typed class-level attributes.
-Each slot is typed by a structural protocol from the previous section; the assigned class must satisfy that protocol.
+A fork wires nine concrete container classes into typed class-level attributes on `ForkProtocol`.
+Two slots carry rich protocol types (`SpecStateType`, `SpecBlockType`); the other seven were collapsed to `SpecSSZType` in PR #882 because no caller ever reads them through the protocol abstraction — the structural typing they added was documentation pretending to be types.
 
 | Slot | Protocol | Concrete container (lstar) |
 | --- | --- | --- |
 | `state_class` | `SpecStateType` | `State` |
 | `block_class` | `SpecBlockType` | `Block` |
-| `block_body_class` | `SpecBlockBodyType` | `BlockBody` |
-| `block_header_class` | `SpecBlockHeaderType` | `BlockHeader` |
-| `aggregated_attestations_class` | `SpecAggregatedAttestationsType` | `AggregatedAttestations` |
+| `block_body_class` | `SpecSSZType` | `BlockBody` |
+| `block_header_class` | `SpecSSZType` | `BlockHeader` |
+| `aggregated_attestations_class` | `SpecSSZType` | `AggregatedAttestations` |
 | `store_class` | `SpecStoreType` | `LstarStore` |
-| `attestation_data_class` | `SpecAttestationDataType` | `AttestationData` |
-| `aggregated_attestation_class` | `SpecAggregatedAttestationType` | `AggregatedAttestation` |
-| `genesis_config_class` | `SpecConfigType` | `GenesisConfig` |
+| `attestation_data_class` | `SpecSSZType` | `AttestationData` |
+| `aggregated_attestation_class` | `SpecSSZType` | `AggregatedAttestation` |
+| `genesis_config_class` | `SpecSSZType` | `GenesisConfig` |
 
-Signed envelopes (`SignedBlock`, `SignedAttestation`, `SignedAggregatedAttestation`) are not held in dedicated slots and are no longer named in the protocol layer; concrete fork stores reference them directly through their own method signatures.
+Concrete fork base classes (e.g. `LstarSpecBase`) narrow these slots back to their real container types so production callers see the typed shape.
+Signed envelopes (`SignedBlock`, `SignedAttestation`, `SignedAggregatedAttestation`) are not named in the protocol layer; concrete fork stores reference them directly through their own method signatures.
 
 ### Abstract methods
 
@@ -265,10 +217,9 @@ class ForkRegistry:
 
     @property
     def current(self) -> ForkProtocol: ...
-
-    def get_fork(self, name: str) -> ForkProtocol: ...
 ```
 
+The `get_fork(name)` lookup was removed in PR #883 (no production caller; name-uniqueness validation builds its own set).
 Construction validates two invariants on the supplied fork list:
 
 1. The list is non-empty.
@@ -278,7 +229,6 @@ Construction validates two invariants on the supplied fork list:
 Violations raise `ValueError` at construction time.
 
 `current` returns the highest-version fork (the last entry of the ordered list).
-`get_fork(name)` looks up a fork by `NAME`; an unknown name raises `KeyError` with the sorted list of known names included in the message.
 
 ### `FORK_SEQUENCE` and `DEFAULT_REGISTRY`
 

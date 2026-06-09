@@ -1,5 +1,5 @@
 ---
-last_synced_commit: e8014f9
+last_synced_commit: 8e28a19
 source_files:
   - src/lean_spec/spec/forks/lstar/validator_duties.py
   - src/lean_spec/spec/forks/lstar/block_production.py
@@ -7,9 +7,10 @@ source_files:
   - src/lean_spec/spec/forks/lstar/signatures.py
   - src/lean_spec/spec/forks/lstar/timeline.py
   - src/lean_spec/spec/forks/lstar/slot.py
+  - src/lean_spec/spec/forks/lstar/errors.py
   - src/lean_spec/node/validator/service.py
   - src/lean_spec/node/validator/registry.py
-related_prs: [449, 717, 796, 799, 800, 808, 817, 819, 827, 843]
+related_prs: [449, 717, 796, 799, 800, 808, 817, 819, 827, 843, 845, 871, 874, 878]
 ---
 
 # Validator — lstar

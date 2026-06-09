@@ -1,11 +1,12 @@
 ---
-last_synced_commit: e8014f9
+last_synced_commit: 8e28a19
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
   - src/lean_spec/spec/forks/lstar/_base.py
   - src/lean_spec/spec/forks/lstar/state_transition.py
   - src/lean_spec/spec/forks/lstar/signatures.py
   - src/lean_spec/spec/forks/lstar/slot.py
+  - src/lean_spec/spec/forks/lstar/errors.py
   - src/lean_spec/spec/forks/lstar/containers/__init__.py
   - src/lean_spec/spec/forks/lstar/containers/attestation.py
   - src/lean_spec/spec/forks/lstar/containers/block.py
@@ -17,7 +18,7 @@ source_files:
   - src/lean_spec/spec/forks/lstar/containers/validator.py
   - src/lean_spec/spec/forks/lstar/config.py
   - src/lean_spec/spec/forks/lstar/__init__.py
-related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843]
+related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843, 845, 871, 877, 879, 881]
 ---
 
 # Lean Consensus — Beacon Chain (lstar)
@@ -168,7 +169,7 @@ class AttestationData(Container):
 A validator's view of the chain at signing time.
 This is the **payload that gets signed**; signature verification binds this exact content.
 
-Frozen.
+Frozen (every spec type is frozen by default since #845, which enforces it once in `StrictBaseModel`).
 
 ### `Attestation`
 
@@ -181,7 +182,7 @@ class Attestation(Container):
 A specific validator's unsigned attestation.
 Used as an internal Pydantic model; on the wire validators always send `SignedAttestation` or `AggregatedAttestation`.
 
-Frozen.
+Frozen (every spec type is frozen by default since #845, which enforces it once in `StrictBaseModel`).
 
 ### `SignedAttestation`
 
@@ -234,7 +235,7 @@ A block's payload.
 A bounded list of aggregated attestations.
 Signatures are not stored here; they fold into the block-level multi-message aggregate proof in `SignedBlock`.
 
-Frozen.
+Frozen (every spec type is frozen by default since #845, which enforces it once in `StrictBaseModel`).
 
 ### `BlockHeader`
 
@@ -250,7 +251,7 @@ class BlockHeader(Container):
 The fixed-shape summary of a block.
 Used in state-transition tracking and state-root caching; never carried separately on the wire.
 
-Frozen.
+Frozen (every spec type is frozen by default since #845, which enforces it once in `StrictBaseModel`).
 
 ### `Block`
 
@@ -267,7 +268,7 @@ A complete block.
 Note that `Block` and `BlockHeader` share four fields and differ only in their final field (`body` vs `body_root`).
 The two are parallel containers, not in an inheritance relationship; this preserves SSZ field ordering as a consensus-critical invariant.
 
-Frozen. PR #843 froze the whole Block family (`BlockBody`, `BlockHeader`, `Block`, `SignedBlock`).
+Frozen (every spec type is frozen by default since #845, which enforces it once in `StrictBaseModel`). PR #843 froze the whole Block family (`BlockBody`, `BlockHeader`, `Block`, `SignedBlock`).
 
 ### `SignedBlock`
 
@@ -285,7 +286,7 @@ The `proof` is a `MultiMessageAggregate` (see `specs/leansig-aggregation.md`) bi
 
 `SignedBlock` is composed (`block` as a nested field) rather than inheriting `Block` so the block's hash tree root remains a single leaf in the envelope's tree.
 
-Frozen.
+Frozen (every spec type is frozen by default since #845, which enforces it once in `StrictBaseModel`).
 
 ### `State`
 
@@ -458,7 +459,7 @@ def state_transition(self, state: State, block: Block) -> State:
         new_state = self.process_block(advanced, block)
         computed_state_root = hash_tree_root(new_state)
         if block.state_root != computed_state_root:
-            raise AssertionError("Invalid block state root")
+            raise SpecRejectionError(reason=RejectionReason.STATE_ROOT_MISMATCH, ...)
 
     return new_state
 ```
@@ -468,7 +469,7 @@ def state_transition(self, state: State, block: Block) -> State:
 3. Verify that the computed post-state root equals `block.state_root`.
 
 Signature verification happens outside this function (in the `SignatureMixin` methods on `LstarSpec`) before the caller invokes `state_transition`.
-A failed root match raises `AssertionError`; the caller treats the block as invalid.
+A failed root match raises `SpecRejectionError(RejectionReason.STATE_ROOT_MISMATCH)`; the caller treats the block as invalid.
 
 ### `process_slots`
 
@@ -498,14 +499,15 @@ Validate the new block header and update header-linked state.
 
 #### Validation
 
-| Check | Failure reason |
+| Check | Failure reason enum |
 | --- | --- |
-| `block.slot == state.slot` | block targets the wrong slot |
-| `block.slot > parent_header.slot` | block is older than the latest header |
-| `block.proposer_index.is_proposer_for(state.slot, len(validators))` | wrong proposer for this slot |
-| `block.parent_root == hash_tree_root(parent_header)` | wrong parent linkage |
+| `block.slot == state.slot` | `BLOCK_SLOT_MISMATCH` |
+| `block.slot > parent_header.slot` | `BLOCK_OLDER_THAN_LATEST_HEADER` |
+| `block.proposer_index < len(validators)` | `PROPOSER_INDEX_OUT_OF_RANGE` |
+| `block.proposer_index.is_proposer_for(state.slot, len(validators))` | `WRONG_PROPOSER` |
+| `block.parent_root == hash_tree_root(parent_header)` | `PARENT_ROOT_MISMATCH` |
 
-Any failure raises `AssertionError`.
+Any failure raises `SpecRejectionError` (subclass of `AssertionError`) with a `RejectionReason` enum value identifying the failure (see `specs/lstar/fork-choice.md#rejection-errors`).
 
 #### Updates
 
@@ -524,7 +526,7 @@ def process_block(self, state: State, block: Block) -> State:
 ```
 
 Header validation, then attestation application.
-A failure in either stage propagates as `AssertionError`.
+A failure in either stage propagates as `SpecRejectionError`.
 
 ### `process_attestations`
 

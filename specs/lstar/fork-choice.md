@@ -1,13 +1,14 @@
 ---
-last_synced_commit: e8014f9
+last_synced_commit: 8e28a19
 source_files:
   - src/lean_spec/spec/forks/lstar/fork_choice.py
   - src/lean_spec/spec/forks/lstar/aggregation.py
   - src/lean_spec/spec/forks/lstar/timeline.py
   - src/lean_spec/spec/forks/lstar/containers/store.py
   - src/lean_spec/spec/forks/lstar/containers/interval.py
+  - src/lean_spec/spec/forks/lstar/errors.py
   - src/lean_spec/spec/forks/lstar/_base.py
-related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827]
+related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827, 833, 845, 871, 879, 888, 892]
 ---
 
 # Fork Choice — lstar
@@ -27,6 +28,7 @@ related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827]
   - [`on_gossip_attestation`](#on_gossip_attestation)
   - [`on_gossip_aggregated_attestation`](#on_gossip_aggregated_attestation)
   - [`on_tick`](#on_tick)
+- [Rejection errors](#rejection-errors)
 - [Validation](#validation)
   - [`validate_attestation`](#validate_attestation)
   - [Signature verification](#signature-verification)
@@ -269,6 +271,14 @@ Advance `store.time` by one interval and dispatch interval-specific work.
 
 The returned `new_aggregates` list is non-empty only at interval 2 for aggregators; otherwise empty.
 
+## Rejection errors
+
+PR #871 replaced bare `AssertionError`s with a typed `SpecRejectionError(AssertionError)` carrying a `RejectionReason` enum (defined in `spec/forks/lstar/errors.py`).
+The new error subclasses `AssertionError`, so existing rejection handlers keep working unchanged; the testing framework now matches on the language-neutral reason enum instead of substring-matching English prose.
+
+Every rejection across `state_transition`, `fork_choice`, `signatures`, `validator_duties`, and `participation` raises `SpecRejectionError(reason=RejectionReason.<KIND>, message=...)`.
+The block-level proof failure (`INVALID_BLOCK_PROOF`) is split out from the single-signature failure (`INVALID_SIGNATURE`) so the two are distinguishable in test vectors and observability.
+
 ## Validation
 
 ### `validate_attestation`
@@ -285,31 +295,43 @@ Pre-flight validation applied before signature verification.
 
 #### Availability check
 
-| Assertion | Reason |
+| Assertion | Reason enum |
 | --- | --- |
-| `data.source.root in store.blocks` | source block must be known |
-| `data.target.root in store.blocks` | target block must be known |
-| `data.head.root in store.blocks` | head block must be known |
+| `data.source.root in store.blocks` | `UNKNOWN_SOURCE_BLOCK` |
+| `data.target.root in store.blocks` | `UNKNOWN_TARGET_BLOCK` |
+| `data.head.root in store.blocks` | `UNKNOWN_HEAD_BLOCK` |
 
 #### Topology check
 
-| Assertion | Reason |
+| Assertion | Reason enum |
 | --- | --- |
-| `data.source.slot <= data.target.slot` | history is monotonic |
-| `data.head.slot >= data.target.slot` | head cannot be older than target |
+| `data.source.slot <= data.target.slot` | `SOURCE_AFTER_TARGET` |
+| `data.head.slot >= data.target.slot` | `HEAD_OLDER_THAN_TARGET` |
 
 #### Consistency check
 
-| Assertion | Reason |
+| Assertion | Reason enum |
 | --- | --- |
-| `store.blocks[data.source.root].slot == data.source.slot` | checkpoint slot must match actual block slot |
-| Same for `data.target` and `data.head` | |
+| `store.blocks[data.source.root].slot == data.source.slot` | `SOURCE_SLOT_MISMATCH` |
+| `store.blocks[data.target.root].slot == data.target.slot` | `TARGET_SLOT_MISMATCH` |
+| `store.blocks[data.head.root].slot == data.head.slot` | `HEAD_SLOT_MISMATCH` |
+
+#### Ancestry check (PR #833)
+
+| Assertion | Reason enum |
+| --- | --- |
+| `data.source` is an ancestor of `data.target` in `store.blocks` | `SOURCE_NOT_ANCESTOR_OF_TARGET` |
+| `data.target` is an ancestor of `data.head` in `store.blocks` | `TARGET_NOT_ANCESTOR_OF_HEAD` |
+
+The ancestry check walks `store.blocks` from the descendant up through `parent_root` and asserts the ancestor's root and slot match exactly.
+Before #833 a vote could name a `(source, target, head)` triple where the three did not actually lie on the same chain, and the vote would still contribute weight; this is now rejected at attestation validation.
 
 #### Time check
 
 ```python
 attestation_start_interval = Interval.from_slot(data.slot)
-assert attestation_start_interval <= store.time + GOSSIP_DISPARITY_INTERVALS
+if attestation_start_interval > store.time + GOSSIP_DISPARITY_INTERVALS:
+    raise SpecRejectionError(reason=RejectionReason.ATTESTATION_TOO_FAR_IN_FUTURE, ...)
 ```
 
 Honest validators emit votes only after their slot has begun.
@@ -331,10 +353,11 @@ Cross-reference: `specs/leansig-aggregation.md` for multi-message verification m
 ```python
 def extract_attestations_from_aggregated_payloads(
     self,
-    store: LstarStore,
     aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]],
 ) -> dict[ValidatorIndex, AttestationData]
 ```
+
+The dead `store` parameter was dropped in PR #888.
 
 Returns a `validator → most_recent_AttestationData` map.
 
@@ -428,9 +451,10 @@ def accept_new_attestations(self, store: LstarStore) -> LstarStore
 
 Migrate `latest_new_aggregated_payloads → latest_known_aggregated_payloads`:
 
-1. For each `(data, proofs)` in new, union into known.
-2. Clear new.
-3. Recompute head with the expanded known pool.
+1. Iterate keys in **deterministic order** (known keys first in insertion order, then new keys in insertion order — PR #892 fixed a bug where the merge iterated `known.keys() | new.keys()`, which is hash-ordered and let two clients pick different forks for equivocating validators).
+2. For each `(data, proofs)` pair, union into the merged dict via copy-on-write (`{**known, **{data: known.get(data, set()) | proofs}}` style — PR #888 replaced the in-place `.setdefault().update()` pattern after #845 made the Store frozen).
+3. Clear new.
+4. Recompute head with the expanded known pool.
 
 Runs at interval 0 (if proposal) and interval 4 (unconditional).
 

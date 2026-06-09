@@ -1,9 +1,9 @@
 ---
-last_synced_commit: e8014f9
+last_synced_commit: 8e28a19
 source_files:
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
   - src/lean_spec/spec/crypto/xmss/containers.py
-related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824]
+related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824, 845]
 ---
 
 # leanSig Aggregation
@@ -102,8 +102,8 @@ class SingleMessageAggregate(Container):
     proof: ByteList512KiB
 ```
 
-Frozen Pydantic container. The Type-1 proof shape.
-Single-message proof aggregating signatures from many validators.
+Frozen Pydantic container (every spec type is frozen by default since #845).
+The Type-1 proof shape; single-message proof aggregating signatures from many validators.
 Every validator named by `participants` signed the same message for the same slot.
 
 The message and slot are **not** stored in the container.
@@ -118,8 +118,8 @@ class MultiMessageAggregate(Container):
     proof: ByteList512KiB
 ```
 
-Frozen Pydantic container. The Type-2 proof shape.
-Merged proof covering many distinct messages.
+Frozen Pydantic container (every spec type is frozen by default since #845).
+The Type-2 proof shape; merged proof covering many distinct messages.
 Each component is a single-message proof over its own message.
 Merging binds the components into one proof a block can carry whole.
 
