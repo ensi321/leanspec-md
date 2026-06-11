@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 8e28a19
+last_synced_commit: e7519866
 source_files:
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
   - src/lean_spec/spec/crypto/xmss/containers.py
@@ -56,12 +56,14 @@ A Type-2 proof binds several Type-1 components into a single object covering dis
 Five operations are forwarded to `lean-multisig-py`:
 
 ```
-aggregate_type_1            build a Type-1 from raw signatures and/or child Type-1s
-verify_type_1               check a Type-1 against a pubkey set, message, and slot
-merge_many_type_1           merge many Type-1s into one Type-2
-verify_type_2_with_messages check a Type-2 against per-component pubkey layouts and bindings
-split_type_2_by_msg         extract one Type-1 component from a Type-2 by message
+aggregate_single_message                  build a Type-1 from raw signatures and/or child Type-1s
+verify_single_message_proof               check a Type-1 against a pubkey set, message, and slot
+merge_many_single_message_proof           merge many Type-1s into one Type-2
+verify_multi_message_proof_with_messages  check a Type-2 against per-component pubkey layouts and bindings
+split_multi_message_proof_by_message      extract one Type-1 component from a Type-2 by message
 ```
+
+The binding names spell out the proof shape: `single_message` is the Type-1 family, `multi_message` the Type-2 family.
 
 A one-shot `setup_prover(mode=LEAN_ENV)` runs at module load.
 The mode value is fixed for the process lifetime and selects the Rust backend bytecode (test or production).

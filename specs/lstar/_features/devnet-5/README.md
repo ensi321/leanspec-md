@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 8e28a19
+last_synced_commit: e7519866
 source_files:
   - src/lean_spec/spec/forks/lstar/containers/__init__.py
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
@@ -116,7 +116,7 @@ Per KB digest of pq-interop chat (Anshal, Partha, tcoratger, Emile threads in la
 Devnet-5 trades some recursive build cost for a smaller wire payload and simpler verification:
 
 - The block carries one proof bytes blob instead of an SSZ list of per-`AttestationData` proofs.
-- Verification calls `verify_type_2_with_messages` once instead of N separate Type-1 verifications.
+- Verification calls `verify_multi_message_proof_with_messages` once instead of N separate Type-1 verifications.
 
 But the recursive aggregation cost (the binding constraint of devnet-4) does not vanish — it shifts to the Type-2 merge step at block construction time.
 

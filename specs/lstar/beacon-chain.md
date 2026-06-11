@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 8e28a19
+last_synced_commit: e7519866
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
   - src/lean_spec/spec/forks/lstar/_base.py
@@ -558,8 +558,9 @@ For each `AggregatedAttestation`:
 3. **Chain consistency**: skip if `attestation_data_matches_chain(data, historical_block_hashes)` is False (zero-hash roots, slot out of range, or chain-root mismatch).
 4. **Time monotonicity**: skip if `target.slot <= source.slot`.
 5. **Target justifiability**: skip if `target.slot.is_justifiable_after(finalized_slot)` is False (3SF-mini rule).
-6. **Record votes**: initialize `justifications[target.root]` to `[False] * len(validators)` if absent; flip each contributing validator's bit to True.
-7. **Supermajority check**: if 3 × votes_for_target ≥ 2 × len(validators):
+6. **Bits validity** (hard reject, not skip): resolve the voting indices from `aggregation_bits`. An attestation that survives the filters above with no set bits raises `SpecRejectionError(EMPTY_AGGREGATION_BITS)`; a set bit pointing past the registry raises `SpecRejectionError(VALIDATOR_INDEX_OUT_OF_RANGE)`. Trailing unset bits beyond the registry are harmless padding. Signature verification normally rejects an out-of-range bit first, so this guards the unsigned path (added in PR #899).
+7. **Record votes**: initialize `justifications[target.root]` to `[False] * len(validators)` if absent; flip each contributing validator's bit to True.
+8. **Supermajority check**: if 3 × votes_for_target ≥ 2 × len(validators):
    - Advance `latest_justified` to `target` (only forward; respects `advance_to` semantics).
    - Set `justified_slots[target.slot]` to True.
    - Discard `justifications[target.root]` (tally no longer needed).

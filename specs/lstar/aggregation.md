@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 8e28a19
+last_synced_commit: e7519866
 source_files:
   - src/lean_spec/spec/forks/lstar/aggregation.py
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
@@ -112,6 +112,8 @@ Runs at interval 2 for nodes with `is_aggregator=True`.
 
 - An existing entry in `latest_new_aggregated_payloads[data]` (child proofs), or
 - An existing entry in `store.attestation_signatures[data]` (raw signatures).
+
+The pool iterates in **deterministic insertion order** (`{**latest_new_aggregated_payloads, **attestation_signatures}`), not a hash-seeded `keys() | keys()` set union — PR #904 fixed this so two clients filling identical input emit byte-identical fork-choice weights, mirroring the merge fix at `specs/lstar/fork-choice.md`.
 
 For each such data entry:
 
