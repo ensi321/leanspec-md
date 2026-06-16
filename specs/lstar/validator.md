@@ -1,5 +1,5 @@
 ---
-last_synced_commit: e7519866
+last_synced_commit: 49ef89f4
 source_files:
   - src/lean_spec/spec/forks/lstar/validator_duties.py
   - src/lean_spec/spec/forks/lstar/block_production.py
@@ -10,7 +10,7 @@ source_files:
   - src/lean_spec/spec/forks/lstar/errors.py
   - src/lean_spec/node/validator/service.py
   - src/lean_spec/node/validator/registry.py
-related_prs: [449, 717, 796, 799, 800, 808, 817, 819, 827, 843, 845, 871, 874, 878]
+related_prs: [449, 717, 796, 799, 800, 808, 817, 819, 827, 843, 845, 871, 874, 878, 1001, 1020, 1030]
 ---
 
 # Validator — lstar
@@ -24,7 +24,6 @@ related_prs: [449, 717, 796, 799, 800, 808, 817, 819, 827, 843, 845, 871, 874, 8
   - [`get_attestation_target`](#get_attestation_target)
   - [`produce_attestation_data`](#produce_attestation_data)
 - [Block production](#block-production)
-  - [`get_proposal_head`](#get_proposal_head)
   - [`produce_block_with_signatures`](#produce_block_with_signatures)
   - [`build_block`](#build_block)
 - [Signing](#signing)
@@ -106,22 +105,9 @@ def produce_attestation_data(self, store: LstarStore, slot: Slot) -> Attestation
 
 This is the unsigned payload the validator then signs with its attestation key.
 
+The wire `slot` an honest validator emits must be **at least** its claimed head block's slot. PR #1020 made peers enforce this on receipt: a vote whose `slot` precedes its head's slot is rejected as `ATTESTATION_SLOT_BEFORE_HEAD` (see `specs/lstar/fork-choice.md#head-slot-lower-bound-pr-1020`). The slot records when the head was observed, so it cannot predate the head — and the lower bound also keeps the wire `slot` clear of the `2**64` overflow edge.
+
 ## Block production
-
-### `get_proposal_head`
-
-```python
-def get_proposal_head(self, store: LstarStore, slot: Slot) -> tuple[LstarStore, Bytes32]
-```
-
-Prepare the store for block proposal at `slot`.
-
-1. Advance store time to the first interval of `slot` via `on_tick(target_interval=Interval.from_slot(slot), has_proposal=True)`.
-2. Run `accept_new_attestations` to migrate new → known payloads.
-3. Return `(store, store.head)`.
-
-The proposal head reflects the latest chain view after processing all pending attestations.
-Building on stale state would risk the block being orphaned by other clients with a fresher view.
 
 ### `produce_block_with_signatures`
 
@@ -136,15 +122,14 @@ def produce_block_with_signatures(
 
 Top-level block production entry point.
 
-1. **Get proposal head**: `(store, head_root) = get_proposal_head(store, slot)`.
+1. **Build on the freshest head**: advance store time to the first interval of `slot` via `on_tick(target_interval=Interval.from_slot(slot), has_proposal=True)`, run `accept_new_attestations` to migrate new → known payloads, then read `head_root = store.head`. PR #1030 inlined these three steps here, removing the single-use `get_proposal_head` helper (its returned head was just `store.head`). Building on stale state would risk the block being orphaned by clients with a fresher view.
 2. **Authorize**: assert `validator_index.is_proposer_for(slot, num_validators)`.
 3. **Build**: call `build_block` with the head state, slot, proposer index, parent root, known block roots, and aggregated payloads.
 4. **Invariant check**: assert `final_post_state.latest_justified.slot >= store.latest_justified.slot`.
    The fixed-point loop in `build_block` must close any justified divergence between the store and the head chain.
    Failure indicates the loop didn't converge.
 5. **Persist**: store the block and post-state under `hash_tree_root(block)`.
-6. **Advance checkpoints**: forward-only via `advance_to`.
-7. **Prune** if finalization advanced.
+6. **Advance the justified checkpoint only**: `latest_justified` advances forward-only via `advance_to`. As of #1001 block production no longer touches `latest_finalized` and no longer prunes: pinning finalized from this locally produced block's own state would strand it on a later reorg (the block has not won head selection yet). The finalized checkpoint is left to `update_head`, which the proposal-head step above already ran (see `specs/lstar/fork-choice.md#update_head`).
 
 Returns `(store, final_block, per_attestation_signatures)`.
 

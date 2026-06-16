@@ -1,9 +1,9 @@
 ---
-last_synced_commit: e7519866
+last_synced_commit: 49ef89f4
 source_files:
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
   - src/lean_spec/spec/crypto/xmss/containers.py
-related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824, 845]
+related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824, 845, 961]
 ---
 
 # leanSig Aggregation

@@ -1,5 +1,5 @@
 ---
-last_synced_commit: e7519866
+last_synced_commit: 49ef89f4
 source_files:
   - src/lean_spec/spec/forks/lstar/fork_choice.py
   - src/lean_spec/spec/forks/lstar/aggregation.py
@@ -8,7 +8,7 @@ source_files:
   - src/lean_spec/spec/forks/lstar/containers/interval.py
   - src/lean_spec/spec/forks/lstar/errors.py
   - src/lean_spec/spec/forks/lstar/_base.py
-related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827, 833, 845, 871, 879, 888, 892]
+related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827, 833, 845, 871, 879, 888, 892, 972, 1001, 1020]
 ---
 
 # Fork Choice — lstar
@@ -188,9 +188,9 @@ Process a new signed block.
    - Reject blocks with more than `MAX_ATTESTATIONS_DATA` (8) distinct entries.
 4. **Verify signatures**: `verify_signatures(signed_block, parent_state.validators)` checks the block's multi-message aggregate proof against the parent state's validator pubkeys.
 5. **State transition**: `state_transition(parent_state, block)` produces the post-state. Signature verification has already happened at step 4 — `state_transition` no longer carries a `valid_signatures` parameter (dropped in #806).
-6. **Checkpoint propagation**: `latest_justified` and `latest_finalized` advance via `advance_to` (forward only; ties keep the existing root).
+6. **Checkpoint propagation**: only `latest_justified` advances via `advance_to` here (forward only; ties keep the existing root). `latest_finalized` is **no longer** advanced in `on_block` — as of #1001 it is recomputed from the canonical head inside `update_head` (step 8), not maintained as an independent monotonic max.
 7. **Register block in known pool**: for each `aggregated_attestation` in the body, ensure `latest_known_aggregated_payloads[data]` exists (with empty proof set if new).
-8. **Recompute head**: `update_head(store)`.
+8. **Recompute head**: `update_head(store)` — this also recomputes `latest_finalized` (see below).
 9. **Prune** if `latest_finalized.slot` advanced: `prune_stale_attestation_data(store)`.
 
 ### `on_gossip_attestation`
@@ -326,18 +326,30 @@ Pre-flight validation applied before signature verification.
 The ancestry check walks `store.blocks` from the descendant up through `parent_root` and asserts the ancestor's root and slot match exactly.
 Before #833 a vote could name a `(source, target, head)` triple where the three did not actually lie on the same chain, and the vote would still contribute weight; this is now rejected at attestation validation.
 
+#### Head-slot lower bound (PR #1020)
+
+| Assertion | Reason enum |
+| --- | --- |
+| `data.slot >= data.head.slot` | `ATTESTATION_SLOT_BEFORE_HEAD` |
+
+A vote cannot have observed its head before that head existed, so the vote slot must not precede the slot of the head block it names.
+This anchors the wire `slot` from below by a known block and enforces the 3SF semantics where the slot records when the head was seen.
+It also keeps the unbounded wire `slot` clear of the `2**64` overflow edge handled by the time check below.
+
 #### Time check
 
 ```python
-attestation_start_interval = Interval.from_slot(data.slot)
-if attestation_start_interval > store.time + GOSSIP_DISPARITY_INTERVALS:
+admission_horizon_interval = int(store.time) + int(GOSSIP_DISPARITY_INTERVALS)
+max_admissible_slot = admission_horizon_interval // int(INTERVALS_PER_SLOT)
+if int(data.slot) > max_admissible_slot:
     raise SpecRejectionError(reason=RejectionReason.ATTESTATION_TOO_FAR_IN_FUTURE, ...)
 ```
 
 Honest validators emit votes only after their slot has begun.
 A small disparity margin (1 interval) absorbs clock skew between peers.
 
-The bound is in intervals, not slots: a whole-slot margin would let an adversary publish next-slot aggregates ahead of any honest validator.
+PR #1020 reworked this to compare in **slot units with plain-int arithmetic** rather than first lifting the wire slot into an `Interval`.
+The two are equivalent, but multiplying a near-`2**64` wire slot into intervals overflowed the range-checked unsigned constructor and crashed the node — a one-message remote denial of service — so the comparison is now done before any interval is constructed.
 
 ### Signature verification
 
@@ -354,6 +366,7 @@ Cross-reference: `specs/leansig-aggregation.md` for multi-message verification m
 def extract_attestations_from_aggregated_payloads(
     self,
     aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]],
+    latest_finalized_slot: Slot,
 ) -> dict[ValidatorIndex, AttestationData]
 ```
 
@@ -365,6 +378,8 @@ For each `(data, proof)` pair, for each participant validator in `proof.particip
 "Later" = strictly higher `data.slot`.
 
 This is the **latest-message** part of LMD-GHOST: each validator's most recent vote counts; earlier votes are dropped.
+
+PR #972 folded the `head.slot > latest_finalized.slot` staleness predicate **into** this extractor (the new `latest_finalized_slot` argument): a vote whose head sits at or below the finalized slot is skipped here. Previously all three call sites (`update_head`, `_compute_lmd_ghost_head`, `update_safe_target`) pre-filtered their pool with the same comprehension before calling; they now pass the pool directly plus `store.latest_finalized.slot`. Iteration order and results are unchanged, so the first-seen-wins tie-break is preserved.
 
 ### `compute_block_weights`
 
@@ -411,10 +426,13 @@ The `min_score` parameter is zero for normal head computation and `ceil(num_vali
 def update_head(self, store: LstarStore) -> LstarStore
 ```
 
-1. `attestations = extract_attestations_from_aggregated_payloads(store, latest_known_aggregated_payloads)`.
+1. `attestations = extract_attestations_from_aggregated_payloads(latest_known_aggregated_payloads, latest_finalized.slot)`.
 2. `store.head = _compute_lmd_ghost_head(store, latest_justified.root, attestations)`.
+3. **Recompute `latest_finalized` from the new head (PR #1001).** Read the finalized slot named by the head's post-state (`store.states[head].latest_finalized.slot`) and recover its root by climbing the head's own ancestor chain down to that slot. Guard the walk as the other ancestor walks do — stop if a parent is absent from the store — and keep the existing trusted anchor when no block sits exactly at the finalized slot (covers a checkpoint-sync boot or a skipped finalized slot). The head and finalized checkpoint are then committed in one `model_copy`.
 
 The head is always a descendant of `latest_justified.root` by construction.
+
+Deriving `latest_finalized` here — rather than as an independent monotonic max over every imported block's post-state (the pre-#1001 behavior in `on_block` and block production) — keeps the finalized checkpoint **on the head chain**. Before the fix, a fork that finalized a higher slot but then lost head selection latched its finalized checkpoint in the store; `get_attestation_target` (which reads `store.latest_finalized`) then disagreed with the state transition (which validates targets against the canonical state's `latest_finalized`), `is_justifiable_after` rejected every advancing target, and finalization froze. Fork choice is deliberately **not** clamped to finalized descendants: leanSpec finalization is order-dependent, so a fork that finalizes a higher slot can still lose head selection, and clamping would latch the head onto that losing fork. The attestation source keeps using `store.latest_justified` (the LMD anchor).
 
 ## Safe target
 
@@ -431,7 +449,7 @@ Runs at interval 3.
 
 1. `num_validators = len(store.states[store.head].validators)`.
 2. `min_target_score = ceil(num_validators * 2 / 3)`.
-3. `attestations = extract_attestations_from_aggregated_payloads(store, latest_new_aggregated_payloads)`.
+3. `attestations = extract_attestations_from_aggregated_payloads(latest_new_aggregated_payloads, latest_finalized.slot)`.
 4. `safe_target = _compute_lmd_ghost_head(store, latest_justified.root, attestations, min_score=min_target_score)`.
 
 **Why only the new pool**: safe target is an availability signal, not durable knowledge.

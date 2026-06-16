@@ -1,6 +1,7 @@
 ---
-last_synced_commit: e7519866
+last_synced_commit: 49ef89f4
 source_files:
+  - src/lean_spec/node/networking/config.py
   - src/lean_spec/node/networking/gossipsub/parameters.py
   - src/lean_spec/node/networking/gossipsub/topic.py
   - src/lean_spec/node/networking/gossipsub/behavior.py
@@ -22,7 +23,7 @@ source_files:
   - src/lean_spec/node/snappy/compress.py
   - src/lean_spec/node/snappy/decompress.py
   - src/lean_spec/node/networking/varint.py
-related_prs: [798]
+related_prs: [798, 928, 931, 948, 949, 950]
 ---
 
 # p2p Substrate
@@ -37,6 +38,7 @@ related_prs: [798]
   - [Mesh degree (D)](#mesh-degree-d)
   - [Timing](#timing)
   - [Message cache](#message-cache)
+  - [Message validation and limits](#message-validation-and-limits)
 - [Request / Response](#request--response)
   - [Wire format](#wire-format)
   - [Protocol ID format](#protocol-id-format)
@@ -127,6 +129,25 @@ The heartbeat maintains the mesh toward `d`:
 
 The seen-id TTL is long enough to bound duplicate detection across realistic propagation delays and short enough to bound memory usage.
 
+### Message validation and limits
+
+A node bounds gossip work before it commits memory, defending against one-message and amplification denial-of-service. The shared payload ceiling is `MAX_PAYLOAD_SIZE = 10 MiB` (`node/networking/config.py`).
+
+| Guard | Behavior | PR |
+| --- | --- | --- |
+| Non-subscribed topic | A message on a topic the node is not subscribed to is dropped before it is cached or enqueued | #948 |
+| Decompressed payload cap | A gossip payload whose **decompressed** size exceeds `MAX_PAYLOAD_SIZE` is rejected before caching | #948 |
+| RPC frame cap | An incoming RPC frame whose declared varint length exceeds `MAX_PAYLOAD_SIZE` is rejected **before** the frame is buffered | #950 |
+
+IWANT anti-amplification (gossipsub v1.1) caps how much a peer can pull from the message cache:
+
+| Parameter | Value | Description |
+| --- | --- | --- |
+| `GOSSIP_RETRANSMISSION` | 3 | Max times one message ID is re-served to a given peer within the heartbeat window; further IWANTs for it are ignored |
+| `MAX_IWANT_MESSAGE_IDS_PER_REQUEST` | 5000 | Max message IDs processed from a single IWANT request; the remainder are dropped |
+
+The per-message served counts reset each heartbeat (#931).
+
 ## Request / Response
 
 ### Wire format
@@ -152,6 +173,8 @@ The varint length prefix serves two purposes:
 2. Validation: after decompression, the recovered size must match the prefix.
 
 A size mismatch terminates the stream.
+
+The declared length must not exceed `MAX_PAYLOAD_SIZE` (10 MiB). A length above the cap is rejected **immediately after the varint is decoded** — before any read buffer is sized and before decompression runs — on both the streaming and non-streaming read paths (#928, #950). The stream-closed decompress fallback also re-checks the recovered length against the declared length and returns a clean `Invalid request` on mismatch rather than yielding a short payload (#949).
 
 ### Protocol ID format
 

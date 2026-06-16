@@ -1,10 +1,10 @@
 ---
-last_synced_commit: 8e28a19
+last_synced_commit: 49ef89f4
 source_files:
   - src/lean_spec/spec/forks/__init__.py
   - src/lean_spec/spec/forks/protocol.py
   - src/lean_spec/spec/forks/registry.py
-related_prs: [638, 686, 800, 804, 882, 883]
+related_prs: [638, 686, 800, 804, 882, 883, 1028]
 ---
 
 # Fork Protocol
@@ -32,7 +32,7 @@ related_prs: [638, 686, 800, 804, 882, 883]
 ## Introduction
 
 The fork-protocol layer defines how Lean consensus dispatches across forks.
-A fork is a versioned implementation that supplies a complete set of consensus container classes plus three lifecycle hooks: genesis construction, store construction, and state migration from the predecessor fork.
+A fork is a versioned implementation that supplies a complete set of consensus container classes plus two lifecycle hooks: genesis construction and store construction.
 
 Two complementary typing mechanisms cooperate here:
 
@@ -113,7 +113,6 @@ class MyFork(ForkProtocol):
     NAME: ClassVar[str] = "my_fork"
     VERSION: ClassVar[int] = 5
     GOSSIP_DIGEST: ClassVar[str] = "00000000"
-    previous: ClassVar[type[ForkProtocol] | None] = PreviousFork
 
     # concrete container class slots
     state_class = State
@@ -129,7 +128,6 @@ class MyFork(ForkProtocol):
     # abstract methods
     def generate_genesis(self, ...): ...
     def create_store(self, ...): ...
-    def upgrade_state(self, ...): ...
 ```
 
 ### Identity fields
@@ -139,7 +137,6 @@ class MyFork(ForkProtocol):
 | `NAME` | `str` | Unique fork name across the registry |
 | `VERSION` | `int` | Strictly monotonic version used for registry ordering |
 | `GOSSIP_DIGEST` | `str` | Fork identifier embedded in gossipsub topic names; must match the digest used by other clients on the same network for block, attestation, and aggregation topics to route compatibly |
-| `previous` | `type[ForkProtocol] | None` | Predecessor fork in the upgrade chain, or `None` for the root fork; forms a linked chain that the registry walks to derive ordering and that `upgrade_state` traverses for cross-fork state migrations |
 
 ### Container class slots
 
@@ -163,8 +160,8 @@ Signed envelopes (`SignedBlock`, `SignedAttestation`, `SignedAggregatedAttestati
 
 ### Abstract methods
 
-A fork must implement three lifecycle hooks.
-All three are declared `@abstractmethod` on `ForkProtocol`; instantiating a fork that omits any of them raises `TypeError` at class-creation time.
+A fork must implement two lifecycle hooks.
+Both are declared `@abstractmethod` on `ForkProtocol`; instantiating a fork that omits either raises `TypeError` at class-creation time.
 
 #### `generate_genesis`
 
@@ -191,19 +188,7 @@ def create_store(
 Construct a forkchoice store anchored at the given state and block.
 The anchor is either the genesis pair or a checkpoint-sync result.
 
-#### `upgrade_state`
-
-```
-def upgrade_state(self, state: SpecStateType) -> SpecStateType
-```
-
-Migrate a state object from the predecessor fork's shape into this fork's shape.
-
-- The root fork (`previous = None`) returns the input unchanged.
-- Later forks return a state of their own shape derived from the predecessor's.
-
-Making this method abstract is intentional.
-A silent no-op default would hide missed migrations whenever a fork adds a field but forgets to override.
+> **Note (#1028):** lstar is the only fork, so there is no fork boundary to migrate across. The cross-fork `upgrade_state` hook and the `previous` fork-chaining classvar were speculative scaffolding with no callers — the registry orders forks by `VERSION`, not by a `previous` link, and nothing dispatches a state migration. Both were removed; they will be reintroduced alongside the second fork that actually needs a migration.
 
 ## Registry
 
@@ -247,9 +232,9 @@ The `Store` symbol exported from `lean_spec.spec.forks` is a public alias resolv
 A new fork `lstar2` would land as follows.
 
 1. Create `src/lean_spec/spec/forks/lstar2/` with concrete container classes and a `Lstar2Spec(ForkProtocol)` implementation.
-2. Set `previous = LstarSpec` on `Lstar2Spec`; pick `VERSION` strictly greater than lstar's; assign a fresh `NAME` and `GOSSIP_DIGEST`.
+2. Pick `VERSION` strictly greater than lstar's; assign a fresh `NAME` and `GOSSIP_DIGEST`.
 3. Wire all nine `*_class` slots to the fork's concrete container classes.
-4. Implement `generate_genesis`, `create_store`, and `upgrade_state(state: LstarState) -> Lstar2State`.
+4. Implement `generate_genesis` and `create_store`. Reintroduce a state-migration hook (e.g. `upgrade_state(state: LstarState) -> Lstar2State`) since lstar2 is the first fork that crosses a fork boundary; this is the machinery #1028 removed while lstar stood alone.
 5. Add `Lstar2Spec()` to `FORK_SEQUENCE` in `forks/__init__.py`, preserving ascending version order.
 6. Update wire-layer artifacts in `node/networking/`, `node/api/endpoints/`, `node/chain/config.py` to reflect the new fork's gossip topics, reqresp message types, API payloads, and tunable constants.
 7. Add a fork builder under `packages/testing/consensus_testing/forks/lstar2/` so the filler can generate test vectors for the new fork.

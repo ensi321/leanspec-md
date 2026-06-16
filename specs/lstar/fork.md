@@ -1,10 +1,10 @@
 ---
-last_synced_commit: 8e28a19
+last_synced_commit: 49ef89f4
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
   - src/lean_spec/spec/forks/lstar/_base.py
   - src/lean_spec/spec/forks/lstar/__init__.py
-related_prs: [638, 808, 817]
+related_prs: [638, 808, 817, 1028]
 ---
 
 # Fork: lstar
@@ -16,10 +16,10 @@ related_prs: [638, 808, 817]
 | `NAME` | `"lstar"` |
 | `VERSION` | `4` |
 | `GOSSIP_DIGEST` | `"12345678"` |
-| `previous` | `None` |
 
 lstar is the **root fork** of the Lean consensus chain.
-There is no predecessor; `previous = None`.
+There is no predecessor.
+A `previous` fork-chaining classvar once recorded this as `None`, but #1028 removed it: with lstar standing alone the registry orders forks by `VERSION` and never walks a `previous` link.
 
 The `VERSION` value of `4` reflects ordering in the registry; it does **not** correspond to a specific devnet number (devnet-4 vs devnet-5 vs ...).
 Future forks register with strictly larger `VERSION` values.
@@ -29,15 +29,10 @@ Two clients on the same Lean network agree on this digest; a mismatch means the 
 
 ## Upgrade
 
-```
-def upgrade_state(self, state: State) -> State:
-    return state
-```
+lstar declares no state-migration hook.
+An `upgrade_state` no-op once existed to satisfy the `ForkProtocol` abstract surface, but #1028 dropped both it and the abstract method while lstar is the only fork (see `specs/fork-protocol.md`).
 
-lstar is the root fork, so `upgrade_state` returns the input unchanged.
-The method exists to satisfy the `ForkProtocol` abstract surface (see `specs/fork-protocol.md`).
-
-When a successor fork (e.g. `lstar2`) lands, it implements `upgrade_state(state: LstarState) -> Lstar2State` that migrates lstar's container shape into lstar2's container shape.
+When a successor fork (e.g. `lstar2`) lands, the migration machinery returns: lstar2 implements an `upgrade_state(state: LstarState) -> Lstar2State` that migrates lstar's container shape into lstar2's.
 
 ## Registry placement
 

@@ -1,5 +1,5 @@
 ---
-last_synced_commit: e7519866
+last_synced_commit: 49ef89f4
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
   - src/lean_spec/spec/forks/lstar/_base.py
@@ -18,7 +18,7 @@ source_files:
   - src/lean_spec/spec/forks/lstar/containers/validator.py
   - src/lean_spec/spec/forks/lstar/config.py
   - src/lean_spec/spec/forks/lstar/__init__.py
-related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843, 845, 871, 877, 879, 881]
+related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843, 845, 871, 877, 879, 881, 942, 1023, 1029]
 ---
 
 # Lean Consensus — Beacon Chain (lstar)
@@ -372,12 +372,16 @@ Returns the bitfield index of `self` in `justified_slots` relative to `finalized
 ```python
 @classmethod
 def proposer_for_slot(cls, slot: Slot, num_validators: Uint64) -> ValidatorIndex:
+    if int(num_validators) == 0:
+        raise SpecRejectionError(reason=RejectionReason.EMPTY_VALIDATOR_REGISTRY, ...)
     return cls(int(slot) % int(num_validators))
 ```
 
 Round-robin: validator index `slot % len(validators)` is the proposer for `slot`.
 No RANDAO, no shuffled assignment.
 Trivial to predict; sufficient for devnet experimentation.
+
+An empty registry has no validator to schedule, so PR #942 guards the modulo: `num_validators == 0` raises `SpecRejectionError(EMPTY_VALIDATOR_REGISTRY)` before the division runs (genesis enforces no minimum registry size, so a bare `ZeroDivisionError` was otherwise reachable from header processing).
 
 ```python
 def is_proposer_for(self, slot: Slot, num_validators: Uint64) -> bool
@@ -397,20 +401,18 @@ With `ATTESTATION_COMMITTEE_COUNT = 1`, every validator falls in subnet 0; the h
 ### Attestation chain check
 
 ```python
-def attestation_data_matches_chain(
-    attestation_data: AttestationData,
-    historical_block_hashes: Sequence[Bytes32],
-) -> bool
+class AttestationData(Container):
+    def lies_on_chain(self, historical_block_hashes: Sequence[Bytes32]) -> bool
 ```
 
-Module-level helper in `state_transition.py`.
+A method on `AttestationData`. PR #1029 moved it off the module-level `attestation_data_matches_chain` function in `state_transition.py` and onto the container (matching the `Checkpoint.advance_to` / `AggregationBits.to_validator_indices` pattern); the chain view is injected by the caller, so the container stays dependency-free. Behavior is unchanged.
 
-Returns True when both the source and target checkpoint roots equal the recorded block roots at their slots.
+Returns True when **all three** checkpoint roots — source, target, **and** head — equal the recorded block roots at their slots.
 Returns False when:
 
-- Either checkpoint root is `ZERO_HASH` (empty slot).
-- Either checkpoint slot is past the end of the historical view.
-- Either recorded chain root differs from the attestation's claim.
+- Any of the three checkpoint roots is `ZERO_HASH` (empty slot).
+- Any checkpoint slot is past the end of the historical view.
+- Any recorded chain root differs from the attestation's claim.
 
 Prevents votes about unknown or conflicting forks from contributing to justification.
 
@@ -555,7 +557,7 @@ For each `AggregatedAttestation`:
 
 1. **Source must be justified**: skip if `justified_slots.is_slot_justified(finalized_slot, source.slot)` is False.
 2. **Target must not already be justified**: skip if the target slot already has its justified bit set.
-3. **Chain consistency**: skip if `attestation_data_matches_chain(data, historical_block_hashes)` is False (zero-hash roots, slot out of range, or chain-root mismatch).
+3. **Chain consistency**: skip if `data.lies_on_chain(historical_block_hashes)` is False (zero-hash roots, slot out of range, or chain-root mismatch).
 4. **Time monotonicity**: skip if `target.slot <= source.slot`.
 5. **Target justifiability**: skip if `target.slot.is_justifiable_after(finalized_slot)` is False (3SF-mini rule).
 6. **Bits validity** (hard reject, not skip): resolve the voting indices from `aggregation_bits`. An attestation that survives the filters above with no set bits raises `SpecRejectionError(EMPTY_AGGREGATION_BITS)`; a set bit pointing past the registry raises `SpecRejectionError(VALIDATOR_INDEX_OUT_OF_RANGE)`. Trailing unset bits beyond the registry are harmless padding. Signature verification normally rejects an out-of-range bit first, so this guards the unsigned path (added in PR #899).
