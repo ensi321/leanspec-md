@@ -1,59 +1,80 @@
 # Frontmatter
 # ---
-# last_synced_commit: 49ef89f4
+# last_synced_commit: 46b8b059
 # source_files:
 #   - src/lean_spec/spec/forks/lstar/containers/store.py
-#   - src/lean_spec/node/api/endpoints/fork_choice.py
-# related_prs: [800, 801]
+#   - src/lean_spec/node/api/handlers.py
+#   - src/lean_spec/node/api/responses.py
+# related_prs: [800, 801, 1104, 1128]
 # ---
 
 components:
   schemas:
+    ForkChoiceNode:
+      type: object
+      description: |
+        One block in the fork-choice tree snapshot.
+        See specs/lstar/fork-choice.md.
+      required:
+        - root
+        - slot
+        - parent_root
+        - proposer_index
+        - weight
+      properties:
+        root:
+          $ref: './primitive.yaml#/components/schemas/Root'
+        slot:
+          $ref: './primitive.yaml#/components/schemas/Slot'
+        parent_root:
+          $ref: './primitive.yaml#/components/schemas/Root'
+        proposer_index:
+          type: integer
+          description: Validator index of the block's proposer.
+        weight:
+          type: integer
+          description: |
+            Vote weight accumulated by this block from the currently-counted
+            attestation pool (zero if no vote reached it).
+
     ForkChoiceView:
       type: object
       description: |
-        Snapshot of the fork-choice store; used by debug tooling.
+        Snapshot of the fork-choice tree at or above the latest finalized slot.
+        PR #1104 reshaped the previous store-dump view into this flat node
+        list with cross-cut head/checkpoint/safe-target fields.
         Cross-reference: specs/lstar/fork-choice.md.
       required:
+        - nodes
         - head
+        - justified
+        - finalized
         - safe_target
-        - latest_justified
-        - latest_finalized
-        - time
+        - validator_count
       properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForkChoiceNode'
+          description: |
+            All blocks in `store.blocks` with `block.slot >= latest_finalized.slot`.
         head:
           $ref: './primitive.yaml#/components/schemas/Root'
+        justified:
+          $ref: './api.yaml#/components/schemas/Checkpoint'
+        finalized:
+          $ref: './api.yaml#/components/schemas/Checkpoint'
+          description: |
+            Finalization as seen from the canonical head, **reorg-mutable**
+            (PR #1128). Not irreversible economic finality.
         safe_target:
           $ref: './primitive.yaml#/components/schemas/Root'
-        latest_justified:
-          $ref: './api.yaml#/components/schemas/Checkpoint'
-        latest_finalized:
-          $ref: './api.yaml#/components/schemas/Checkpoint'
-        time:
-          type: string
-          format: uint64
-          pattern: '^[0-9]+$'
-          description: Current intervals since genesis.
-        validator_id:
+        validator_count:
           oneOf:
-            - $ref: './primitive.yaml#/components/schemas/ValidatorIndex'
+            - type: integer
             - type: 'null'
-        blocks:
-          type: object
-          additionalProperties:
-            type: object
-            description: |
-              Block payload at this root. JSON shape mirrors the Block
-              container; see specs/lstar/beacon-chain.md#block.
-        pools:
-          type: object
           description: |
-            Per-pool attestation evidence counters; exact JSON shape
-            depends on the debug endpoint implementation.
-          properties:
-            attestation_signatures_count:
-              type: integer
-            new_aggregated_payloads_count:
-              type: integer
-            known_aggregated_payloads_count:
-              type: integer
+            Length of `store.states[store.head].validators`, or `null` when
+            the head's post-state is absent (PR #1104). Reported as `null`,
+            not `0`, so consumers cannot misread "state unavailable" as
+            "no validators".

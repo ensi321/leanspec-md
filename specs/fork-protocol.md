@@ -1,10 +1,10 @@
 ---
-last_synced_commit: 49ef89f4
+last_synced_commit: f92d8c05
 source_files:
   - src/lean_spec/spec/forks/__init__.py
   - src/lean_spec/spec/forks/protocol.py
   - src/lean_spec/spec/forks/registry.py
-related_prs: [638, 686, 800, 804, 882, 883, 1028]
+related_prs: [638, 686, 800, 804, 882, 883, 1028, 1141]
 ---
 
 # Fork Protocol
@@ -125,8 +125,8 @@ class MyFork(ForkProtocol):
     aggregated_attestation_class = AggregatedAttestation
     genesis_config_class = GenesisConfig
 
-    # abstract methods
-    def generate_genesis(self, ...): ...
+    # abstract methods (create_store is on ForkProtocol;
+    # generate_genesis is on the concrete fork's typed base — see below)
     def create_store(self, ...): ...
 ```
 
@@ -160,19 +160,10 @@ Signed envelopes (`SignedBlock`, `SignedAttestation`, `SignedAggregatedAttestati
 
 ### Abstract methods
 
-A fork must implement two lifecycle hooks.
-Both are declared `@abstractmethod` on `ForkProtocol`; instantiating a fork that omits either raises `TypeError` at class-creation time.
+A fork must implement one lifecycle hook on `ForkProtocol` itself: `create_store`.
+It is declared `@abstractmethod`; instantiating a fork that omits it raises `TypeError` at class-creation time.
 
-#### `generate_genesis`
-
-```
-def generate_genesis(self, genesis_time: Uint64, validators: SSZList[Any]) -> SpecStateType
-```
-
-Construct a genesis state for this fork.
-
-- Inputs: genesis time and the ordered validator list.
-- Output: an instance of the fork's state class with all fields initialized to their genesis values.
+Genesis construction is **not** on `ForkProtocol`. It used to be — declared as `generate_genesis(self, genesis_time: Uint64, validators: SSZList[Any]) -> SpecStateType` — but PR #1141 relocated the declaration to each fork's concrete typed base (for lstar: `LstarSpecBase`). The abstract signature had erased the validator element type to `SSZList[Any]`, and the concrete lstar override recovered it with an `assert isinstance(validators, Validators)` that vanishes under `python -O`. Genesis is only ever invoked on the concrete fork (the composition root narrows to `LstarSpec`; tests and the testing package instantiate it directly), never through `ForkProtocol`. Moving the declaration onto the concrete base lets it carry the real `Validators` and state types, and the recovering assert is gone. `ty` enforces parameter contravariance, so narrowing the override alone would break Liskov against the abstract protocol; relocating is what keeps the type checker happy.
 
 #### `create_store`
 

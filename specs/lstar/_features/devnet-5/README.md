@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 49ef89f4
+last_synced_commit: 8cf92a47
 source_files:
   - src/lean_spec/spec/forks/lstar/containers/__init__.py
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py

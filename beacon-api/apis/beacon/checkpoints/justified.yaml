@@ -1,11 +1,16 @@
 # Frontmatter
 # ---
-# last_synced_commit: 49ef89f4
+# last_synced_commit: 29a251c2
 # source_files:
-#   - src/lean_spec/node/api/endpoints/checkpoints.py
-#   - src/lean_spec/node/api/routes.py
-# related_prs: []
+#   - src/lean_spec/node/api/handlers.py
+#   - src/lean_spec/node/api/responses.py
+#   - src/lean_spec/node/api/server.py
+# related_prs: [1104]
 # ---
+#
+# PR #1104 consolidated the per-resource handler files into ApiHandlers
+# in handlers.py and the typed Pydantic response models in responses.py.
+# The wire shape is unchanged: snake_case (root, slot) under CheckpointBody.
 
 /lean/v0/checkpoints/justified:
   get:

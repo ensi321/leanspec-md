@@ -1,22 +1,29 @@
 # Frontmatter
 # ---
-# last_synced_commit: 49ef89f4
+# last_synced_commit: 29a251c2
 # source_files:
-#   - src/lean_spec/node/api/endpoints/aggregator.py
-#   - src/lean_spec/node/api/aggregator_controller.py
-#   - src/lean_spec/node/api/routes.py
-# related_prs: [636]
+#   - src/lean_spec/node/api/handlers.py
+#   - src/lean_spec/node/api/responses.py
+#   - src/lean_spec/node/api/context.py
+#   - src/lean_spec/node/api/server.py
+# related_prs: [636, 1104]
 # ---
+#
+# Admin routes under /lean/v0/admin are unauthenticated.
+# Deployments must restrict access to them at the network layer (PR #1104).
 
 /lean/v0/admin/aggregator:
   get:
     operationId: getAggregatorStatus
     summary: Get current aggregator role status.
     description: |
-      Returns whether the node is currently configured as an aggregator,
-      plus the configured aggregate subnet IDs.
+      Returns whether the node is currently configured as an aggregator.
 
       lstar-specific admin endpoint; no direct beacon-APIs precedent.
+
+      Sources its value from the sync service's `is_aggregator` flag
+      directly. PR #1104 removed the `AggregatorController` indirection
+      and the write-only NetworkService aggregator copy.
     tags:
       - Admin
     responses:
@@ -26,26 +33,26 @@
           application/json:
             schema:
               type: object
-              required: [is_aggregator, aggregate_subnet_ids]
+              required: [is_aggregator]
               properties:
                 is_aggregator:
                   type: boolean
                   description: True when the node performs attestation aggregation.
-                aggregate_subnet_ids:
-                  type: array
-                  items:
-                    type: integer
-                    description: Subnet ID (0 .. ATTESTATION_COMMITTEE_COUNT-1).
+      '503':
+        description: Aggregator role control not wired into this node.
 
   post:
     operationId: toggleAggregator
     summary: Toggle aggregator role at runtime.
     description: |
-      Enables or disables the aggregator role and optionally updates the
-      aggregate subnet ID list without restarting the node.
+      Enables or disables the aggregator role without restarting the node.
 
-      A node can switch into aggregator mode only when validator key
-      material is loaded; otherwise the call returns 400.
+      The body must be a JSON object with a single boolean field `enabled`.
+      Loose-typed ints (`0`/`1`) are rejected because Python distinguishes
+      them from booleans even where JSON parsers blur the two.
+
+      Returns the new value plus the previous one so callers can detect
+      no-op toggles. The handler logs an info line on a state change.
     tags:
       - Admin
     requestBody:
@@ -54,27 +61,30 @@
         application/json:
           schema:
             type: object
-            required: [is_aggregator]
+            required: [enabled]
             properties:
-              is_aggregator:
+              enabled:
                 type: boolean
-              aggregate_subnet_ids:
-                type: array
-                items:
-                  type: integer
+                description: Target aggregator role.
     responses:
       '200':
-        description: New aggregator status.
+        description: New aggregator status plus the prior value.
         content:
           application/json:
             schema:
               type: object
+              required: [is_aggregator, previous]
               properties:
                 is_aggregator:
                   type: boolean
-                aggregate_subnet_ids:
-                  type: array
-                  items:
-                    type: integer
+                previous:
+                  type: boolean
       '400':
-        description: Invalid request (e.g. enabling aggregator without validator keys).
+        description: |
+          One of:
+          - "Invalid JSON body" — request body is not valid JSON.
+          - "Missing 'enabled' field in body" — JSON is not an object, or
+            the `enabled` key is absent.
+          - "'enabled' must be a boolean" — value is not a JSON boolean.
+      '503':
+        description: Aggregator role control not wired into this node.

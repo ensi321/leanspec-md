@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 49ef89f4
+last_synced_commit: d9028d9b
 source_files:
   - src/lean_spec/spec/forks/lstar/fork_choice.py
   - src/lean_spec/spec/forks/lstar/aggregation.py
@@ -8,7 +8,7 @@ source_files:
   - src/lean_spec/spec/forks/lstar/containers/interval.py
   - src/lean_spec/spec/forks/lstar/errors.py
   - src/lean_spec/spec/forks/lstar/_base.py
-related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827, 833, 845, 871, 879, 888, 892, 972, 1001, 1020]
+related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827, 833, 845, 871, 879, 888, 892, 972, 1001, 1020, 1128, 1134, 1136, 1148]
 ---
 
 # Fork Choice — lstar
@@ -33,7 +33,7 @@ related_prs: [449, 717, 796, 799, 800, 802, 805, 806, 818, 819, 820, 827, 833, 8
   - [`validate_attestation`](#validate_attestation)
   - [Signature verification](#signature-verification)
 - [Head computation (LMD-GHOST)](#head-computation-lmd-ghost)
-  - [`extract_attestations_from_aggregated_payloads`](#extract_attestations_from_aggregated_payloads)
+  - [`_extract_attestations_from_aggregated_payloads`](#_extract_attestations_from_aggregated_payloads)
   - [`compute_block_weights`](#compute_block_weights)
   - [`_compute_lmd_ghost_head`](#_compute_lmd_ghost_head)
   - [`update_head`](#update_head)
@@ -101,7 +101,7 @@ class Store[StateT: Container, BlockT: Container](StrictBaseModel):
 | `head` | Result of running LMD-GHOST on the current pool contents |
 | `safe_target` | Deepest descendant of `latest_justified` with at least 2/3 supermajority among **new** payloads |
 | `latest_justified` | Most recent justified checkpoint advanced forward only |
-| `latest_finalized` | Most recent finalized checkpoint advanced forward only |
+| `latest_finalized` | Finalization as seen from the canonical head — **reorg-mutable**, not irreversible economic finality (see PR #1128 and `update_head` below) |
 | `validator_index` | Local validator's index, or `None` for passive nodes |
 
 ### Block and state caches
@@ -360,17 +360,17 @@ Cross-reference: `specs/leansig-aggregation.md` for multi-message verification m
 
 ## Head computation (LMD-GHOST)
 
-### `extract_attestations_from_aggregated_payloads`
+### `_extract_attestations_from_aggregated_payloads`
 
 ```python
-def extract_attestations_from_aggregated_payloads(
+def _extract_attestations_from_aggregated_payloads(
     self,
     aggregated_payloads: dict[AttestationData, set[SingleMessageAggregate]],
     latest_finalized_slot: Slot,
 ) -> dict[ValidatorIndex, AttestationData]
 ```
 
-The dead `store` parameter was dropped in PR #888.
+The dead `store` parameter was dropped in PR #888. PR #1136 made the helper private (underscore prefix) since it has no callers outside its module.
 
 Returns a `validator → most_recent_AttestationData` map.
 
@@ -406,7 +406,7 @@ def _compute_lmd_ghost_head(
     store: LstarStore,
     start_root: Bytes32,
     attestations: dict[ValidatorIndex, AttestationData],
-    min_score: int = 0,
+    min_score: int | None = None,
 ) -> Bytes32
 ```
 
@@ -418,7 +418,7 @@ The LMD-GHOST greedy walk.
    Ties break **lexicographically larger hash wins** (`max(children, key=lambda x: (weights[x], x))`).
 4. Stop when no children remain; that leaf is the head.
 
-The `min_score` parameter is zero for normal head computation and `ceil(num_validators * 2 / 3)` for safe-target computation (see below).
+The `min_score` parameter is `None` for normal head computation (no threshold) and `ceil(num_validators * 2 / 3)` for safe-target computation (see below). PR #1134 turned this from `int = 0` into `int | None = None` so the absence of a filter is named explicitly instead of overloading the value zero.
 
 ### `update_head`
 
@@ -426,7 +426,7 @@ The `min_score` parameter is zero for normal head computation and `ceil(num_vali
 def update_head(self, store: LstarStore) -> LstarStore
 ```
 
-1. `attestations = extract_attestations_from_aggregated_payloads(latest_known_aggregated_payloads, latest_finalized.slot)`.
+1. `attestations = _extract_attestations_from_aggregated_payloads(latest_known_aggregated_payloads, latest_finalized.slot)`.
 2. `store.head = _compute_lmd_ghost_head(store, latest_justified.root, attestations)`.
 3. **Recompute `latest_finalized` from the new head (PR #1001).** Read the finalized slot named by the head's post-state (`store.states[head].latest_finalized.slot`) and recover its root by climbing the head's own ancestor chain down to that slot. Guard the walk as the other ancestor walks do — stop if a parent is absent from the store — and keep the existing trusted anchor when no block sits exactly at the finalized slot (covers a checkpoint-sync boot or a skipped finalized slot). The head and finalized checkpoint are then committed in one `model_copy`.
 
@@ -449,7 +449,7 @@ Runs at interval 3.
 
 1. `num_validators = len(store.states[store.head].validators)`.
 2. `min_target_score = ceil(num_validators * 2 / 3)`.
-3. `attestations = extract_attestations_from_aggregated_payloads(latest_new_aggregated_payloads, latest_finalized.slot)`.
+3. `attestations = _extract_attestations_from_aggregated_payloads(latest_new_aggregated_payloads, latest_finalized.slot)`.
 4. `safe_target = _compute_lmd_ghost_head(store, latest_justified.root, attestations, min_score=min_target_score)`.
 
 **Why only the new pool**: safe target is an availability signal, not durable knowledge.
@@ -482,7 +482,12 @@ Runs at interval 0 (if proposal) and interval 4 (unconditional).
 def prune_stale_attestation_data(self, store: LstarStore) -> LstarStore
 ```
 
-Remove attestation data that can no longer influence fork choice — entries whose `target.slot <= latest_finalized.slot`.
+Remove attestation data that can no longer influence fork choice. A vote survives only when **both** of:
+
+- `head.slot > latest_finalized.slot` (head sits strictly above finalization), **and**
+- `head` is a descendant of `latest_finalized` in `store.blocks` (head still lives under the finalized block).
+
+PR #1148 added the ancestry guard. The slot-only filter retained any vote whose head sat above the finalized slot on a sibling branch the finalized block orphaned: the LMD-GHOST walk anchored at the justified root could never reach such a head, so it added zero weight, yet equivocating votes on those dead high-slot branches survived until finalization passed their head slot, leaking retention pressure. The justified root is always a descendant of the finalized root, so any vote able to credit a block on the canonical subtree is itself a descendant of the finalized block and is kept; only provably-dead votes are additionally dropped.
 
 Applies to all three pools (`attestation_signatures`, `latest_new_aggregated_payloads`, `latest_known_aggregated_payloads`).
 

@@ -1,11 +1,11 @@
 ---
-last_synced_commit: 49ef89f4
+last_synced_commit: 46b8b059
 source_files:
   - src/lean_spec/spec/forks/lstar/aggregation.py
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
   - src/lean_spec/spec/forks/lstar/containers/attestation.py
   - src/lean_spec/spec/forks/lstar/containers/store.py
-related_prs: [449, 717, 796, 799, 822, 827, 843, 845, 892]
+related_prs: [449, 717, 796, 799, 822, 827, 843, 845, 892, 1126, 1128, 1131, 1138]
 ---
 
 # Aggregation — lstar (fork-specific)

@@ -1,5 +1,5 @@
 ---
-last_synced_commit: 49ef89f4
+last_synced_commit: f70bab57
 source_files:
   - src/lean_spec/spec/forks/lstar/spec.py
   - src/lean_spec/spec/forks/lstar/_base.py
@@ -18,7 +18,7 @@ source_files:
   - src/lean_spec/spec/forks/lstar/containers/validator.py
   - src/lean_spec/spec/forks/lstar/config.py
   - src/lean_spec/spec/forks/lstar/__init__.py
-related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843, 845, 871, 877, 879, 881, 942, 1023, 1029]
+related_prs: [449, 717, 796, 799, 800, 801, 806, 817, 819, 828, 832, 842, 843, 845, 871, 877, 879, 881, 942, 1023, 1029, 1102, 1116, 1141, 1144, 1147]
 ---
 
 # Lean Consensus — Beacon Chain (lstar)
@@ -137,6 +137,8 @@ Methods:
 
 - `get_attestation_pubkey() -> PublicKey` — decode the XMSS attestation pubkey.
 - `get_proposal_pubkey() -> PublicKey` — decode the XMSS proposal pubkey.
+
+The `Validators` registry container (an `SSZList[Validator]` with `LIMIT = VALIDATOR_REGISTRY_LIMIT`) enforces a construction-time invariant added in PR #1147: every `validators[i].index` must equal `i`. Within lstar all validator lookups address the registry by list position; the serialized `index` field is never read for consensus logic, but it contributes to the SSZ state root. A mismatched value would silently change the state root without carrying any consensus meaning. The invariant rejects such registries with `SSZValueError`. The field itself is kept (removing it would shift every consensus vector's state root); both genesis paths already assign sequential indices from the position, so no existing vector root is affected.
 
 ### `Checkpoint`
 
@@ -433,8 +435,10 @@ The bit-to-index direction sorts indices ascending; the index-to-bit direction v
 ## Genesis
 
 ```python
-def generate_genesis(self, genesis_time: Uint64, validators: SSZList[Any]) -> State
+def generate_genesis(self, genesis_time: Uint64, validators: Validators) -> State
 ```
+
+Declared on `LstarSpecBase` (not on the cross-fork `ForkProtocol`) since PR #1141 — see `specs/fork-protocol.md#abstract-methods` and `specs/lstar/fork.md#registry-placement` for the rationale.
 
 Builds the genesis state:
 
@@ -541,6 +545,18 @@ def process_attestations(
 ```
 
 Apply each block-included aggregated attestation, updating justification and finalization per 3SF-mini.
+
+#### Distinct-data cap (pre-loop)
+
+Before any vote is processed, the step bounds the number of distinct `AttestationData` entries in the block (PR #1102):
+
+```
+distinct = {a.data for a in attestations}
+if len(distinct) > MAX_ATTESTATIONS_DATA:
+    raise SpecRejectionError(TOO_MANY_ATTESTATION_DATA, ...)
+```
+
+The cap lives in the transition itself rather than at the fork-choice caller because both the wire-import path and the block-production trial path rely on it. Each distinct data builds a tally sized to the validator set; an unbounded count amplifies import work, and the SSZ list limit sits far above the consensus cap. Only the **distinct** count is bounded, not the total — split aggregates that share one data entry count once and are idempotently merged. The wire-level duplicate prohibition (every `AttestationData` appears at most once per block) stays at the fork-choice caller; it would otherwise reject these legitimate splits.
 
 #### Setup
 

@@ -1,9 +1,9 @@
 ---
-last_synced_commit: 49ef89f4
+last_synced_commit: 8cf92a47
 source_files:
   - src/lean_spec/spec/forks/lstar/containers/aggregation.py
   - src/lean_spec/spec/crypto/xmss/containers.py
-related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824, 845, 961]
+related_prs: [282, 318, 322, 449, 496, 717, 796, 799, 822, 824, 845, 961, 1126, 1131, 1138]
 ---
 
 # leanSig Aggregation
@@ -70,7 +70,7 @@ The mode value is fixed for the process lifetime and selects the Rust backend by
 
 ### Inverse-rate exponent
 
-The `LOG_INV_RATE` constant forwards an inverse-rate parameter to the SNARK backend.
+The `LOG_INVERSE_RATE` constant (renamed from `LOG_INV_RATE` in PR #1138 under the no-abbreviations rule; pure Python identifier change, no wire impact) forwards an inverse-rate parameter to the SNARK backend.
 
 | Mode | Value |
 | --- | --- |
